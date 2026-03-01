@@ -79,6 +79,7 @@ MODEL_CACHE_DIR=/data/models flox activate
 - Smoke tests: optional forward pass and token generation on quantized output to verify correctness before publishing
 - JSON output mode: machine-readable status for pipeline integration (`--json` on all three scripts)
 - Checksum manifests (AWQ): opt-in SHA-256 checksums for all output files
+- CI-ready: same Flox environment in local dev and CI, with GitHub Actions support (see [CI / Pipeline Usage](#ci--pipeline-usage))
 - Auto-provisioned Python venv with PyPI packages on first activation
 
 
@@ -374,6 +375,63 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 ### JSON Mode
 
 All three scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. Successful runs (`ok`) include timing.
+
+
+## CI / Pipeline Usage
+
+The scripts are designed for unattended operation. With `--json`, all human-readable logs go to stderr and a single JSON object is written to stdout on completion, making it straightforward to parse results in a pipeline.
+
+### Running in CI
+
+Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
+
+Note: the convenience commands (`quantize-fp8`, `quantize-llmc`, etc.) are shell functions defined in `[profile]` and are only available in interactive sessions (`flox activate`). In CI and non-interactive contexts (`flox activate -- <cmd>`), call the scripts directly:
+
+```yaml
+# .github/workflows/quantize.yml
+jobs:
+  quantize:
+    runs-on: [self-hosted, gpu]  # needs NVIDIA GPU
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flox/install-flox-action@v2
+      - uses: flox/activate-action@v1
+        with:
+          command: |
+            bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+            cat result.json
+```
+
+For non-GitHub CI (GitLab, CircleCI, Jenkins), install Flox on the runner and use `flox activate --`:
+
+```bash
+flox activate -- bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+```
+
+### Key behaviors for automation
+
+- **Exit codes**: 0 on success or if output already exists, 1 on error
+- **Idempotent**: re-running with the same parameters detects existing output and exits immediately (JSON reports `"status": "exists"`)
+- **`--force`**: bypasses the exists check and re-quantizes from scratch
+- **Locking**: concurrent jobs targeting the same output serialize automatically via file locks; the second job waits or skips
+- **`--json`**: structured output for parsing; logs on stderr won't pollute stdout
+- **`HF_TOKEN`**: set in CI secrets for gated model access — the HuggingFace libraries pick it up automatically
+
+### Batch quantization example
+
+```bash
+#!/usr/bin/env bash
+# Quantize a list of models, collect results
+# Run inside flox activate, or use: flox activate -- bash this-script.sh
+models=(Qwen/Qwen3-8B meta-llama/Llama-3.1-8B-Instruct google/gemma-3-4b-it)
+
+for model in "${models[@]}"; do
+  echo "--- $model ---" >&2
+  bash scripts/quantize-llmc.sh --online --json "$model" >> results.jsonl
+done
+```
+
+Each line in `results.jsonl` is a self-contained JSON object with status, output path, timing, and validation.
 
 
 ## AutoAWQ Compatibility Patches
