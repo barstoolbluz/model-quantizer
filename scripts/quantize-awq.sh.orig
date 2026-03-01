@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# quantize-awq.sh — Quantize a HuggingFace model to AWQ 4-bit format.
+#
+# Usage:
+#   quantize-awq.sh <model-id> [bits] [group-size]
+#
+# Examples:
+#   quantize-awq.sh Qwen/Qwen3-8B
+#   quantize-awq.sh Qwen/Qwen3-8B 4 128
+#   quantize-awq.sh meta-llama/Llama-3.1-8B-Instruct 4 64
+
+set -euo pipefail
+
+MODEL_ID="${1:?Usage: quantize-awq.sh <model-id> [bits] [group-size]}"
+BITS="${2:-4}"
+GROUP_SIZE="${3:-128}"
+
+CACHE_DIR="${MODEL_CACHE_DIR:-/home/daedalus/dev/vllm-runtime/models}"
+OUTPUT_DIR="${QUANTIZED_OUTPUT_DIR:-$CACHE_DIR}"
+
+# Derive output model name: Org/Model → Org/Model-AWQ
+OUTPUT_MODEL_ID="${MODEL_ID}-AWQ"
+OUTPUT_PATH="$OUTPUT_DIR/hub/models--$(echo "$OUTPUT_MODEL_ID" | tr "/" "--")/snapshots/main"
+
+echo "=== AWQ Quantization ==="
+echo "  Source:     $MODEL_ID"
+echo "  Output:     $OUTPUT_MODEL_ID"
+echo "  Bits:       $BITS"
+echo "  Group size: $GROUP_SIZE"
+echo "  Cache:      $CACHE_DIR"
+echo "  Output dir: $OUTPUT_PATH"
+echo ""
+
+if [ -d "$OUTPUT_PATH" ] && [ -f "$OUTPUT_PATH/config.json" ]; then
+    echo "Output already exists at $OUTPUT_PATH"
+    echo "Delete it first if you want to re-quantize."
+    exit 0
+fi
+
+mkdir -p "$OUTPUT_PATH"
+
+# Check source model exists in cache
+HF_CACHE="$CACHE_DIR/hub/models--$(echo "$MODEL_ID" | tr "/" "--")"
+if [ ! -d "$HF_CACHE" ]; then
+    echo "ERROR: Source model not found in cache: $HF_CACHE"
+    echo "  Download it first with the inferencing-model-downloader environment."
+    exit 1
+fi
+
+exec python3 -c "
+import torch
+from awq import AutoAWQForCausalLM
+from transformers import AutoTokenizer
+import os, json
+
+model_id = '$MODEL_ID'
+bits = $BITS
+group_size = $GROUP_SIZE
+output_path = '$OUTPUT_PATH'
+cache_dir = '$CACHE_DIR'
+
+print(f'Loading tokenizer for {model_id}...')
+os.environ['HF_HOME'] = cache_dir
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+
+print(f'Loading model {model_id}...')
+model = AutoAWQForCausalLM.from_pretrained(model_id, trust_remote_code=True)
+
+print(f'Quantizing to {bits}-bit AWQ (group_size={group_size})...')
+quant_config = {
+    'zero_point': True,
+    'q_group_size': group_size,
+    'w_bit': bits,
+    'version': 'GEMM',
+}
+model.quantize(tokenizer, quant_config=quant_config)
+
+print(f'Saving to {output_path}...')
+model.save_quantized(output_path)
+tokenizer.save_pretrained(output_path)
+
+# Write refs/main for HF cache compatibility
+refs_dir = os.path.dirname(os.path.dirname(output_path)) + '/refs'
+os.makedirs(refs_dir, exist_ok=True)
+with open(os.path.join(refs_dir, 'main'), 'w') as f:
+    f.write('main')
+
+print('Done.')
+print(f'  Model: {output_path}')
+
+# Show size comparison
+source_cache = f'{cache_dir}/hub/models--{model_id.replace(\"/\", \"--\")}'
+source_size = sum(
+    os.path.getsize(os.path.join(dp, f))
+    for dp, dn, filenames in os.walk(source_cache)
+    for f in filenames
+) / (1024**3)
+output_size = sum(
+    os.path.getsize(os.path.join(dp, f))
+    for dp, dn, filenames in os.walk(output_path)
+    for f in filenames
+) / (1024**3)
+print(f'  Source size: {source_size:.1f} GB')
+print(f'  Output size: {output_size:.1f} GB')
+print(f'  Compression: {source_size/output_size:.1f}x')
+"
