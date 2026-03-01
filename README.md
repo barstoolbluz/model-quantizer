@@ -5,6 +5,35 @@ Flox environment for quantizing HuggingFace models for offline vLLM inference. T
 Python 3.13 | PyTorch 2.9.1 (CUDA) | x86\_64-linux, aarch64-linux
 
 
+## How It Works
+
+This repository is a [Flox](https://flox.dev) environment. Flox is a package manager built on Nix that defines your entire development toolchain — system packages, Python runtime, CUDA libraries — in a single declarative manifest (`.flox/env/manifest.toml`). The `.flox/` directory travels with the repo, so anyone who clones it gets an identical environment without installing anything manually beyond Flox itself.
+
+Running `flox activate` does the following:
+
+1. Provides Python 3.13 and PyTorch 2.9.1 with CUDA support from the Flox catalog (no pip/conda)
+2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor
+3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
+4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
+5. Exposes `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` as shell functions
+
+No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox, activate, quantize.
+
+
+## Setup
+
+1. **Install Flox** (one-time): follow the instructions at [flox.dev/docs](https://flox.dev/docs/install-flox/install/) for your platform (apt, rpm, nix, or Docker).
+2. **Clone and activate**:
+
+```bash
+git clone <this-repo>
+cd model-quantizer
+flox activate
+```
+
+The first activation provisions the Python venv and installs PyPI packages. Subsequent activations are instant.
+
+
 ## Quick Start
 
 ```bash
@@ -379,7 +408,7 @@ PyPI torch is automatically removed after installation so Python falls through t
 - **Driver**: NVIDIA driver compatible with CUDA 12.x (driver 525+)
 - **VRAM**: Depends on model size. 7-8B models need ~16 GB for loading + quantization workspace. AWQ and GPTQ 4-bit outputs fit larger models in less VRAM at inference time.
 - **Disk**: Source model + quantized output. Budget 1.5-2x the source model size for the quantization workspace.
-- **Flox**: [flox.dev](https://flox.dev) must be installed
+- **Flox**: must be installed (see [Setup](#setup))
 
 
 ## Troubleshooting
