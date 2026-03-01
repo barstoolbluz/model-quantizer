@@ -17,7 +17,7 @@ Running `flox activate` does the following:
 4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
 5. Exposes `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` as shell functions
 
-No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox, activate, quantize.
+No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
 
 ## Setup
