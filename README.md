@@ -55,7 +55,9 @@ quantize-llmc Qwen/Qwen3-8B gptq --online
 list-models
 ```
 
-All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` to any script to download models on the fly. The cache directory defaults to `$FLOX_ENV_PROJECT/hub` but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
+All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` (FP8, LLMC) or set `HF_OFFLINE=0` (AWQ) to download models on the fly. If `HF_TOKEN` is set in your shell environment, the HuggingFace libraries will use it automatically for gated model access.
+
+The cache directory defaults to `$FLOX_ENV_PROJECT/hub` but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
 
 ```bash
 # Override at activation time
