@@ -55,7 +55,7 @@ quantize-llmc Qwen/Qwen3-8B gptq --online
 list-models
 ```
 
-Models must already be present in the cache directory before quantization. All scripts default to `HF_OFFLINE=1`. Use the [inferencing-model-downloader](../inferencing-model-downloader/) environment to fetch models, or pass `--online` / `HF_OFFLINE=0` to allow downloads during quantization.
+All scripts default to offline mode (`HF_OFFLINE=1`), so models must already be in the cache directory. Pass `--online` to any script to allow downloads during quantization.
 
 
 ## Features
@@ -415,7 +415,7 @@ PyPI torch is automatically removed after installation so Python falls through t
 
 ### "Source model not found in cache"
 
-The model has not been downloaded. Either download it first with the inferencing-model-downloader environment, or pass `--online` / `HF_OFFLINE=0` to allow the script to fetch it.
+The model has not been downloaded. Pass `--online` to allow the script to fetch it, or download the model separately before running in offline mode.
 
 ### "Lock busy"
 
