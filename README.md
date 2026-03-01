@@ -55,10 +55,14 @@ quantize-llmc Qwen/Qwen3-8B gptq --online
 list-models
 ```
 
-All scripts default to offline mode (`HF_OFFLINE=1`), so models must already be in the cache directory. Pass `--online` to any script to allow downloads during quantization. The cache directory defaults to `$FLOX_ENV_PROJECT/hub` but can be pointed anywhere by setting `MODEL_CACHE_DIR` before activation:
+All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` to any script to download models on the fly. The cache directory defaults to `$FLOX_ENV_PROJECT/hub` but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
 
 ```bash
+# Override at activation time
 MODEL_CACHE_DIR=/data/models flox activate
+
+# Or change the default permanently in the manifest [vars] section:
+#   MODEL_CACHE_DIR = "/data/models"
 ```
 
 
@@ -217,7 +221,7 @@ When `WRITE_LOCAL_REPO_LAYOUT=0`, output is written to a flat directory under `$
 
 ### Global Environment Variables
 
-These are set in the Flox manifest and apply to all scripts. Override any of them at activation time (e.g., `MODEL_CACHE_DIR=/data/models flox activate`):
+These are set in the `[vars]` section of `.flox/env/manifest.toml` and apply to all scripts. Change the defaults directly in the manifest, or override per-session at activation time (e.g., `MODEL_CACHE_DIR=/data/models flox activate`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
