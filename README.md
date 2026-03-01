@@ -34,11 +34,11 @@ Models must already be present in the cache directory before quantization. All s
 - Three quantization backends: Legacy AWQ (4-bit INT) (now deprecated; use with older models only); FP8 torchao (E4M3); LLM Compressor (FP8, GPTQ, W8A8, NVFP4)
 - Offline-first: all scripts default to cache-only model loading
 - HF hub cache output layout: quantized models appear as siblings of source models, ready for vLLM
-- Content-addressed output (AWQ, FP8): each run produces a deterministic snapshot ID derived from a full configuration fingerprint; identical parameters always map to the same output path
-- Idempotent: re-running skips quantization if output is already complete (AWQ and FP8 detect this via fingerprint; LLMC checks for an existing output directory)
+- Content-addressed output: each run produces a deterministic snapshot ID derived from a full configuration fingerprint; identical parameters always map to the same output path
+- Idempotent: re-running with the same parameters skips quantization if output already exists
 - Concurrent-safe: file-level locking prevents races when multiple quantization jobs target the same output directory
 - Smoke tests: optional forward pass and token generation on quantized output to verify correctness before publishing
-- JSON output mode (AWQ): machine-readable status for pipeline integration
+- JSON output mode: machine-readable status for pipeline integration (`--json` on all three scripts)
 - Checksum manifests (AWQ): opt-in SHA-256 checksums for all output files
 - Auto-provisioned Python venv with PyPI packages on first activation
 
@@ -84,6 +84,9 @@ quantize-fp8 --allow-safetensors Qwen/Qwen3-8B
 
 # Custom shard size for large models
 quantize-fp8 --max-shard-size 4GB Qwen/Qwen3-8B
+
+# JSON output for scripting
+quantize-fp8 --json Qwen/Qwen3-8B
 ```
 
 Output model is saved as `<model-id>-FP8-TORCHAO` in the cache directory.
@@ -121,6 +124,9 @@ quantize-llmc Qwen/Qwen3-8B gptq --dataset-path ./calibration.jsonl --text-colum
 
 # Sequential pipeline for large models that exceed GPU memory
 quantize-llmc Qwen/Qwen3-32B gptq --online --pipeline sequential
+
+# JSON output for scripting
+quantize-llmc --json Qwen/Qwen3-8B
 ```
 
 Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The default is `open_platypus`. Pass `--online` if the dataset is not already cached.
@@ -169,7 +175,7 @@ $QUANTIZED_OUTPUT_DIR/
         awq_quantize_meta.json            # AWQ only
 ```
 
-For AWQ and FP8, the `<snapshot-id>` is a hash of the full quantization fingerprint (model ID, source commit, quant parameters, seed, versions) — SHA-256 for AWQ, SHA-1 for FP8. This makes each output content-addressed: changing any parameter produces a new snapshot directory, while identical parameters reuse the existing one. LLMC generates a random unique ID per run.
+The `<snapshot-id>` is a hash of the full quantization fingerprint (model ID, source commit, quant parameters, seed, etc.) — SHA-256 for AWQ, SHA-1 for FP8 and LLMC. This makes each output content-addressed: changing any parameter produces a new snapshot directory, while identical parameters reuse the existing one.
 
 When `WRITE_LOCAL_REPO_LAYOUT=0`, output is written to a flat directory under `$QUANTIZED_OUTPUT_DIR/<model-id-suffix>/<snapshot-id>/`.
 
@@ -245,6 +251,7 @@ quantize-fp8 <model-id> [options]
       --no-validate-quant       Skip quantization coverage check
       --validate-zip-crc        Run zip CRC checks on .bin shards (slow)
       --quant-min-ratio FLOAT   Min fraction of quantized layers (default: 0.80)
+      --json                    JSON output on stdout (logs to stderr)
 ```
 
 ### LLM Compressor Options
@@ -301,6 +308,7 @@ General:
   --suffix STR             Override output suffix
   --lock-timeout SECONDS   Lock wait time (0=fail, -1=unlimited)
   --log-dir PATH           llmcompressor log directory
+  --json                   JSON output on stdout (logs to stderr)
 ```
 
 
@@ -312,7 +320,7 @@ All three scripts implement file-level locking on the output directory to preven
 
 ### Fingerprinting
 
-The AWQ and FP8 scripts compute content-addressed snapshot IDs by hashing a JSON fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. Identical configurations always produce the same output path. LLMC uses a random unique ID per run instead.
+All three scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. Identical configurations always produce the same output path.
 
 ### Determinism
 
@@ -324,9 +332,9 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 - **FP8**: `--smoke-test` loads the output checkpoint and generates one token.
 - **LLMC**: `--validate` spawns a separate vLLM process to load the checkpoint and run generation, verifying the output is a valid vLLM-loadable model.
 
-### JSON Mode (AWQ)
+### JSON Mode
 
-Pass `--json` to get machine-readable output on stdout. The JSON includes status, model ID, source commit, snapshot ID, output path, quantization time, and smoke test results. Logs are redirected to stderr.
+All three scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. Successful runs (`ok`) include timing.
 
 
 ## AutoAWQ Compatibility Patches
