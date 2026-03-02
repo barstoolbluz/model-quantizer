@@ -48,7 +48,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-usage() { sed -n '1,380p' "$0"; }
+usage() { sed -n '3,46s/^# \?//p' "$0"; }
 
 log() {
   # shellcheck disable=SC2059

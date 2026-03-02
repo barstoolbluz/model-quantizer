@@ -3,9 +3,18 @@
   "manifest": {
     "version": 1,
     "install": {
+      "model-quantizer": {
+        "pkg-path": "flox/model-quantizer",
+        "pkg-group": "model-quantizer",
+        "systems": [
+          "x86_64-linux",
+          "aarch64-linux"
+        ]
+      },
       "torch": {
         "pkg-path": "flox-cuda/python3Packages.torch",
         "pkg-group": "torch",
+        "priority": 7,
         "version": "2.9.1",
         "systems": [
           "x86_64-linux",
@@ -13,139 +22,30 @@
         ]
       },
       "uv": {
-        "pkg-path": "uv"
+        "pkg-path": "uv",
+        "pkg-group": "uv"
       }
     },
     "vars": {
-      "MODEL_CACHE_DIR": "$FLOX_ENV_PROJECT/hub",
-      "QUANTIZED_OUTPUT_DIR": "$FLOX_ENV_PROJECT/hub",
+      "MODEL_CACHE_DIR": "$FLOX_ENV_PROJECT",
+      "QUANTIZED_OUTPUT_DIR": "$FLOX_ENV_PROJECT",
+      "VENV_DIR": "$FLOX_ENV_CACHE/venv",
       "WRITE_LOCAL_REPO_LAYOUT": "1"
     },
     "hook": {
-      "on-activate": "  mkdir -p \"$MODEL_CACHE_DIR\"\n\n  VENV_DIR=\"$FLOX_ENV_CACHE/venv\"\n\n  # Strip non-matching Python version site-packages from PYTHONPATH.\n  # Composed Flox environments (e.g. claude-code.dev) may leak other Python\n  # version paths that confuse the resolver and produce ABI mismatches.\n  _clean_pp=\"\"\n  IFS=':' read -ra _parts <<< \"${PYTHONPATH:-}\"\n  for _p in \"${_parts[@]}\"; do\n    [[ \"$_p\" == *python3.* ]] && [[ \"$_p\" != *python3.13* ]] && continue\n    _clean_pp=\"${_clean_pp:+$_clean_pp:}$_p\"\n  done\n  export PYTHONPATH=\"$VENV_DIR/lib/python3.13/site-packages${_clean_pp:+:$_clean_pp}\"\n\n  # Provision a uv venv with all Python packages from PyPI.\n  # --system-site-packages so the Flox-provided torch (SM120 CUDA) is visible.\n  if [ ! -d \"$VENV_DIR\" ]; then\n    echo \"Creating uv venv...\"\n    uv venv --python python3 --system-site-packages \"$VENV_DIR\"\n\n    echo \"Installing Python packages via uv...\"\n    VIRTUAL_ENV=\"$VENV_DIR\" uv pip install \\\n      torchao transformers accelerate safetensors huggingface-hub \\\n      autoawq llmcompressor\n\n    # Remove PyPI torch so Python falls through to the Flox-provided\n    # SM120 CUDA torch via --system-site-packages.\n    VIRTUAL_ENV=\"$VENV_DIR\" uv pip uninstall torch\n\n    # AutoAWQ compat patches for transformers 4.52+:\n    # 1. PytorchGELUTanh was renamed to GELUTanh.\n    # 2. Catcher class needs __getattr__ to proxy attributes (e.g.\n    #    attention_type) from the wrapped decoder layer, otherwise\n    #    transformers 4.57+ crashes during calibration.\n    sed -i 's/PytorchGELUTanh/GELUTanh/g' \\\n      \"$VENV_DIR/lib/python3.13/site-packages/awq/quantize/scale.py\"\n\n    _quantizer=\"$VENV_DIR/lib/python3.13/site-packages/awq/quantize/quantizer.py\"\n    if ! grep -q '__getattr__' \"$_quantizer\"; then\n      sed -i '/class Catcher(nn.Module):/,/def forward(self, \\*args, \\*\\*kwargs):/{\n        /def forward(self, \\*args, \\*\\*kwargs):/i\\\n\\            def __getattr__(self, name):\\\n\\                try:\\\n\\                    return super().__getattr__(name)\\\n\\                except AttributeError:\\\n\\                    return getattr(self.module, name)\\\n\n      }' \"$_quantizer\"\n    fi\n\n    # 3. Suppress AWQ deprecation notice.  AWQ __init__.py calls\n    #    warnings.simplefilter(\"default\", DeprecationWarning) which\n    #    overrides PYTHONWARNINGS=ignore, then fires a DeprecationWarning.\n    _awq_init=\"$VENV_DIR/lib/python3.13/site-packages/awq/__init__.py\"\n    if grep -q 'simplefilter.*DeprecationWarning' \"$_awq_init\"; then\n      sed -i '/simplefilter.*DeprecationWarning/d; /warnings\\.warn(_FINAL_DEV_MESSAGE/d' \"$_awq_init\"\n    fi\n\n    echo \"Done.\"\n  fi\n  export PATH=\"$VENV_DIR/bin:$PATH\"\n"
+      "on-activate": "  mkdir -p \"$MODEL_CACHE_DIR\"\n\n  # Strip non-matching Python version site-packages from PYTHONPATH.\n  # Composed Flox environments (e.g. claude-code.dev) may leak other Python\n  # version paths that confuse the resolver and produce ABI mismatches.\n  _clean_pp=\"\"\n  IFS=':' read -ra _parts <<< \"${PYTHONPATH:-}\"\n  for _p in \"${_parts[@]}\"; do\n    [[ \"$_p\" == *python3.* ]] && [[ \"$_p\" != *python3.13* ]] && continue\n    _clean_pp=\"${_clean_pp:+$_clean_pp:}$_p\"\n  done\n  export PYTHONPATH=\"$VENV_DIR/lib/python3.13/site-packages${_clean_pp:+:$_clean_pp}\"\n\n  \"$FLOX_ENV/bin/setup-venv\" || return 1\n  export PATH=\"$VENV_DIR/bin:$PATH\"\n"
     },
     "profile": {
-      "common": "  quantize-awq() { \"$FLOX_ENV_PROJECT/scripts/quantize-awq.sh\" \"$@\"; }\n  quantize-fp8() { \"$FLOX_ENV_PROJECT/scripts/quantize-fp8.sh\" \"$@\"; }\n  quantize-llmc() { \"$FLOX_ENV_PROJECT/scripts/quantize-llmc.sh\" \"$@\"; }\n  list-models() { \"$FLOX_ENV_PROJECT/scripts/list-models.sh\" \"$@\"; }\n"
+      "common": ""
     },
-    "options": {}
+    "options": {
+      "systems": [
+        "aarch64-linux",
+        "x86_64-linux"
+      ]
+    }
   },
   "packages": [
-    {
-      "attr_path": "uv",
-      "broken": false,
-      "derivation": "/nix/store/x6j4192kdag9zpv7b13dsl6d9dl4mq0z-uv-0.10.4.drv",
-      "description": "Extremely fast Python package installer and resolver, written in Rust",
-      "install_id": "uv",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
-      "name": "uv-0.10.4",
-      "pname": "uv",
-      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
-      "rev_count": 953160,
-      "rev_date": "2026-02-23T12:05:20Z",
-      "scrape_date": "2026-02-25T04:48:25.875225Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "0.10.4",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/iz3bcbs2pa00l0awp05pfb0x8dlx1ljm-uv-0.10.4"
-      },
-      "system": "aarch64-darwin",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "uv",
-      "broken": false,
-      "derivation": "/nix/store/ylqxvsfnibr8lmrk4q7m63c3ks4vpy6g-uv-0.10.4.drv",
-      "description": "Extremely fast Python package installer and resolver, written in Rust",
-      "install_id": "uv",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
-      "name": "uv-0.10.4",
-      "pname": "uv",
-      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
-      "rev_count": 953160,
-      "rev_date": "2026-02-23T12:05:20Z",
-      "scrape_date": "2026-02-25T05:27:08.194782Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "0.10.4",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/d3agwkb703z1j2iccs5p0hyf8nva03fy-uv-0.10.4"
-      },
-      "system": "aarch64-linux",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "uv",
-      "broken": false,
-      "derivation": "/nix/store/gxpzi6mcjlg7d52v60znp8ayqcqi9dg0-uv-0.10.4.drv",
-      "description": "Extremely fast Python package installer and resolver, written in Rust",
-      "install_id": "uv",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
-      "name": "uv-0.10.4",
-      "pname": "uv",
-      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
-      "rev_count": 953160,
-      "rev_date": "2026-02-23T12:05:20Z",
-      "scrape_date": "2026-02-25T06:11:33.134995Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "0.10.4",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/vrznmkha6ws0574jhhnxf4czsy3igs8s-uv-0.10.4"
-      },
-      "system": "x86_64-darwin",
-      "group": "toplevel",
-      "priority": 5
-    },
-    {
-      "attr_path": "uv",
-      "broken": false,
-      "derivation": "/nix/store/p9g4bsrbhvchmm3adzdaz8bhcm1n80hd-uv-0.10.4.drv",
-      "description": "Extremely fast Python package installer and resolver, written in Rust",
-      "install_id": "uv",
-      "license": "[ Apache-2.0, MIT ]",
-      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
-      "name": "uv-0.10.4",
-      "pname": "uv",
-      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
-      "rev_count": 953160,
-      "rev_date": "2026-02-23T12:05:20Z",
-      "scrape_date": "2026-02-25T07:03:34.022261Z",
-      "stabilities": [
-        "unstable"
-      ],
-      "unfree": false,
-      "version": "0.10.4",
-      "outputs_to_install": [
-        "out"
-      ],
-      "outputs": {
-        "out": "/nix/store/kwxpv3m0wyyzgpqvm805vlkh2as4asy6-uv-0.10.4"
-      },
-      "system": "x86_64-linux",
-      "group": "toplevel",
-      "priority": 5
-    },
     {
       "attr_path": "python3Packages.torch",
       "broken": false,
@@ -159,7 +59,7 @@
       "rev": "ec7c70d12ce2fc37cb92aff673dcdca89d187bae",
       "rev_count": 944744,
       "rev_date": "2026-02-11T20:21:07Z",
-      "scrape_date": "2026-02-28T03:25:38.796107062Z",
+      "scrape_date": "2026-03-02T00:53:44.902840681Z",
       "stabilities": [
         "unstable"
       ],
@@ -177,7 +77,7 @@
       },
       "system": "aarch64-linux",
       "group": "torch",
-      "priority": 5
+      "priority": 7
     },
     {
       "attr_path": "python3Packages.torch",
@@ -192,7 +92,7 @@
       "rev": "ec7c70d12ce2fc37cb92aff673dcdca89d187bae",
       "rev_count": 944744,
       "rev_date": "2026-02-11T20:21:07Z",
-      "scrape_date": "2026-02-28T03:25:38.796109846Z",
+      "scrape_date": "2026-03-02T00:53:44.902847011Z",
       "stabilities": [
         "unstable"
       ],
@@ -210,6 +110,126 @@
       },
       "system": "x86_64-linux",
       "group": "torch",
+      "priority": 7
+    },
+    {
+      "attr_path": "uv",
+      "broken": false,
+      "derivation": "/nix/store/ylqxvsfnibr8lmrk4q7m63c3ks4vpy6g-uv-0.10.4.drv",
+      "description": "Extremely fast Python package installer and resolver, written in Rust",
+      "install_id": "uv",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
+      "name": "uv-0.10.4",
+      "pname": "uv",
+      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
+      "rev_count": 953160,
+      "rev_date": "2026-02-23T12:05:20Z",
+      "scrape_date": "2026-02-25T05:27:08.194782Z",
+      "stabilities": [
+        "unstable",
+        "staging"
+      ],
+      "unfree": false,
+      "version": "0.10.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/d3agwkb703z1j2iccs5p0hyf8nva03fy-uv-0.10.4"
+      },
+      "system": "aarch64-linux",
+      "group": "uv",
+      "priority": 5
+    },
+    {
+      "attr_path": "uv",
+      "broken": false,
+      "derivation": "/nix/store/p9g4bsrbhvchmm3adzdaz8bhcm1n80hd-uv-0.10.4.drv",
+      "description": "Extremely fast Python package installer and resolver, written in Rust",
+      "install_id": "uv",
+      "license": "[ Apache-2.0, MIT ]",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=2fc6539b481e1d2569f25f8799236694180c0993",
+      "name": "uv-0.10.4",
+      "pname": "uv",
+      "rev": "2fc6539b481e1d2569f25f8799236694180c0993",
+      "rev_count": 953160,
+      "rev_date": "2026-02-23T12:05:20Z",
+      "scrape_date": "2026-02-25T07:03:34.022261Z",
+      "stabilities": [
+        "unstable",
+        "staging"
+      ],
+      "unfree": false,
+      "version": "0.10.4",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/kwxpv3m0wyyzgpqvm805vlkh2as4asy6-uv-0.10.4"
+      },
+      "system": "x86_64-linux",
+      "group": "uv",
+      "priority": 5
+    },
+    {
+      "attr_path": "model-quantizer",
+      "broken": false,
+      "derivation": "/nix/store/irxxcfvxw65fc51mn9xwql79pdccrpld-model-quantizer-0.2.0.drv",
+      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
+      "install_id": "model-quantizer",
+      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "name": "model-quantizer-0.2.0",
+      "pname": "model-quantizer",
+      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "rev_count": 5,
+      "rev_date": "2026-03-02T00:48:56Z",
+      "scrape_date": "2026-03-02T00:59:07.703812632Z",
+      "stabilities": [
+        "unstable",
+        "staging",
+        "stable"
+      ],
+      "unfree": false,
+      "version": "0.2.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/4xbh46blfnq2aylkcwgpcz77n46mc897-model-quantizer-0.2.0"
+      },
+      "system": "aarch64-linux",
+      "group": "model-quantizer",
+      "priority": 5
+    },
+    {
+      "attr_path": "model-quantizer",
+      "broken": false,
+      "derivation": "/nix/store/mwpz6wvc19bwr5fhnq7z4l5qiqxyhs1h-model-quantizer-0.2.0.drv",
+      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
+      "install_id": "model-quantizer",
+      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "name": "model-quantizer-0.2.0",
+      "pname": "model-quantizer",
+      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "rev_count": 5,
+      "rev_date": "2026-03-02T00:48:56Z",
+      "scrape_date": "2026-03-02T00:59:07.703815396Z",
+      "stabilities": [
+        "unstable",
+        "staging",
+        "stable"
+      ],
+      "unfree": false,
+      "version": "0.2.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/9ahldxzlrrz988znbz6wa2hnhrhkc2qi-model-quantizer-0.2.0"
+      },
+      "system": "x86_64-linux",
+      "group": "model-quantizer",
       "priority": 5
     }
   ]

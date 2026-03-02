@@ -255,7 +255,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$MODEL_ID" ]] || die "Usage: quantize-llmc <model-id-or-path> [scheme] [options]"
+[[ -n "$MODEL_ID" ]] || { sed -n '2,79s/^# \?//p' "$0"; die "Missing <model-id-or-path>"; }
 
 case "$SCHEME" in
   fp8|gptq|w8a8|nvfp4) ;;

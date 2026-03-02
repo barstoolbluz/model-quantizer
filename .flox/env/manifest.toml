@@ -1,49 +1,29 @@
-## Flox Environment Manifest -----------------------------------------
-##
-##   _Everything_ you need to know about the _manifest_ is here:
-##
-##   https://flox.dev/docs/reference/command-reference/manifest.toml/
-##
-## -------------------------------------------------------------------
-# Flox manifest version managed by Flox CLI
 version = 1
 
 
-## Install Packages --------------------------------------------------
-##  $ flox install gum  <- puts a package in [install] section below
-##  $ flox search gum   <- search for a package
-##  $ flox show gum     <- show all versions of a package
-## -------------------------------------------------------------------
 [install]
-#pytorch-sm120.pkg-path = "flox/pytorch-python313-cuda13_1-sm120-avx512"
-#pytorch-sm120.systems = ["x86_64-linux"]
-#pytorch-sm120.pkg-group = "pytorch"
-#pytorch-sm120.priority = 0
 uv.pkg-path = "uv"
+uv.pkg-group = "uv"
 torch.pkg-path = "flox-cuda/python3Packages.torch"
 torch.version = "2.9.1"
 torch.systems = ["x86_64-linux", "aarch64-linux"]
 torch.pkg-group = "torch"
+torch.priority = 7
+model-quantizer.pkg-path = "flox/model-quantizer"
+model-quantizer.systems = ["x86_64-linux", "aarch64-linux"]
+model-quantizer.pkg-group = "model-quantizer"
 
 
-## Environment Variables ---------------------------------------------
-##  ... available for use in the activated environment
-##      as well as [hook], [profile] scripts and [services] below.
-## -------------------------------------------------------------------
 [vars]
-MODEL_CACHE_DIR = "$FLOX_ENV_PROJECT/hub"
-QUANTIZED_OUTPUT_DIR = "$FLOX_ENV_PROJECT/hub"
+MODEL_CACHE_DIR = "$FLOX_ENV_PROJECT"
+QUANTIZED_OUTPUT_DIR = "$FLOX_ENV_PROJECT"
 WRITE_LOCAL_REPO_LAYOUT = "1"
+VENV_DIR = "$FLOX_ENV_CACHE/venv"
 
 
-## Activation Hook ---------------------------------------------------
-##  ... run by _bash_ shell when you run 'flox activate'.
-## -------------------------------------------------------------------
 [hook]
 on-activate = '''
   mkdir -p "$MODEL_CACHE_DIR"
-
-  VENV_DIR="$FLOX_ENV_CACHE/venv"
 
   # Strip non-matching Python version site-packages from PYTHONPATH.
   # Composed Flox environments (e.g. claude-code.dev) may leak other Python
@@ -56,109 +36,34 @@ on-activate = '''
   done
   export PYTHONPATH="$VENV_DIR/lib/python3.13/site-packages${_clean_pp:+:$_clean_pp}"
 
-  # Provision a uv venv with all Python packages from PyPI.
-  # --system-site-packages so the Flox-provided torch (SM120 CUDA) is visible.
-  if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating uv venv..."
-    uv venv --python python3 --system-site-packages "$VENV_DIR"
-
-    echo "Installing Python packages via uv..."
-    VIRTUAL_ENV="$VENV_DIR" uv pip install \
-      torchao transformers accelerate safetensors huggingface-hub \
-      autoawq llmcompressor
-
-    # Remove PyPI torch so Python falls through to the Flox-provided
-    # SM120 CUDA torch via --system-site-packages.
-    VIRTUAL_ENV="$VENV_DIR" uv pip uninstall torch
-
-    # AutoAWQ compat patches for transformers 4.52+:
-    # 1. PytorchGELUTanh was renamed to GELUTanh.
-    # 2. Catcher class needs __getattr__ to proxy attributes (e.g.
-    #    attention_type) from the wrapped decoder layer, otherwise
-    #    transformers 4.57+ crashes during calibration.
-    sed -i 's/PytorchGELUTanh/GELUTanh/g' \
-      "$VENV_DIR/lib/python3.13/site-packages/awq/quantize/scale.py"
-
-    _quantizer="$VENV_DIR/lib/python3.13/site-packages/awq/quantize/quantizer.py"
-    if ! grep -q '__getattr__' "$_quantizer"; then
-      sed -i '/class Catcher(nn.Module):/,/def forward(self, \*args, \*\*kwargs):/{
-        /def forward(self, \*args, \*\*kwargs):/i\
-\            def __getattr__(self, name):\
-\                try:\
-\                    return super().__getattr__(name)\
-\                except AttributeError:\
-\                    return getattr(self.module, name)\
-
-      }' "$_quantizer"
-    fi
-
-    # 3. Suppress AWQ deprecation notice.  AWQ __init__.py calls
-    #    warnings.simplefilter("default", DeprecationWarning) which
-    #    overrides PYTHONWARNINGS=ignore, then fires a DeprecationWarning.
-    _awq_init="$VENV_DIR/lib/python3.13/site-packages/awq/__init__.py"
-    if grep -q 'simplefilter.*DeprecationWarning' "$_awq_init"; then
-      sed -i '/simplefilter.*DeprecationWarning/d; /warnings\.warn(_FINAL_DEV_MESSAGE/d' "$_awq_init"
-    fi
-
-    echo "Done."
-  fi
+  "$FLOX_ENV/bin/setup-venv" || return 1
   export PATH="$VENV_DIR/bin:$PATH"
 '''
 
 
-## Profile script ----------------------------------------------------
-## ... sourced by _your shell_ when you run 'flox activate'.
-## -------------------------------------------------------------------
 [profile]
 common = '''
-  quantize-awq() { "$FLOX_ENV_PROJECT/scripts/quantize-awq.sh" "$@"; }
-  quantize-fp8() { "$FLOX_ENV_PROJECT/scripts/quantize-fp8.sh" "$@"; }
-  quantize-llmc() { "$FLOX_ENV_PROJECT/scripts/quantize-llmc.sh" "$@"; }
-  list-models() { "$FLOX_ENV_PROJECT/scripts/list-models.sh" "$@"; }
 '''
 
-
-## Services ---------------------------------------------------------
-##  $ flox services start             <- Starts all services
-##  $ flox services status            <- Status of running services
-##  $ flox activate --start-services  <- Activates & starts all
-## ------------------------------------------------------------------
 [services]
-# myservice.command = "python3 -m http.server"
 
 
-## Include ----------------------------------------------------------
-## ... environments to create a composed environment
-## ------------------------------------------------------------------
 [include]
 # environments = [
 #     { dir = "../common" }
 # ]
 
 
-## Build and publish your own packages ------------------------------
-##  $ flox build
-##  $ flox publish
-## ------------------------------------------------------------------
 [build]
-# [build.myproject]
-# description = "The coolest project ever"
-# version = "0.0.1"
-# command = """
-#   mkdir -p $out/bin
-#   cargo build --release
-#   cp target/release/myproject $out/bin/myproject
-# """
 
 
-## Other Environment Options -----------------------------------------
 [options]
 # Systems that environment is compatible with
-# systems = [
+systems = [
 #   "aarch64-darwin",
-#   "aarch64-linux",
+   "aarch64-linux",
 #   "x86_64-darwin",
-#   "x86_64-linux",
-# ]
+   "x86_64-linux",
+ ]
 # Uncomment to disable CUDA detection.
 # cuda-detection = false

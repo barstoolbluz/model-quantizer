@@ -15,7 +15,7 @@ Running `flox activate` does the following:
 2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
-5. Exposes `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` as shell functions
+5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -57,7 +57,7 @@ list-models
 
 All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` (FP8, LLMC) or set `HF_OFFLINE=0` (AWQ) to download models on the fly. If `HF_TOKEN` is set in your shell environment, the HuggingFace libraries will use it automatically for gated model access.
 
-The cache directory defaults to `$FLOX_ENV_PROJECT/hub` but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
+The cache directory defaults to `$FLOX_ENV_PROJECT` (models live under `$FLOX_ENV_PROJECT/hub/models--*/`) but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
 
 ```bash
 # Override at activation time
@@ -228,8 +228,8 @@ These are set in the `[vars]` section of `.flox/env/manifest.toml` and apply to 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_CACHE_DIR` | `$FLOX_ENV_PROJECT/hub` | HuggingFace cache root (contains `hub/models--*/`) |
-| `QUANTIZED_OUTPUT_DIR` | `$FLOX_ENV_PROJECT/hub` | Output root for quantized models |
+| `MODEL_CACHE_DIR` | `$FLOX_ENV_PROJECT` | HuggingFace cache root (scripts append `hub/models--*/`) |
+| `QUANTIZED_OUTPUT_DIR` | `$FLOX_ENV_PROJECT` | Output root for quantized models |
 | `WRITE_LOCAL_REPO_LAYOUT` | `1` | Write HF hub cache layout for vLLM auto-discovery |
 
 ### AWQ Environment Variables
@@ -385,7 +385,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-Note: the convenience commands (`quantize-fp8`, `quantize-llmc`, etc.) are shell functions defined in `[profile]` and are only available in interactive sessions (`flox activate`). In CI and non-interactive contexts (`flox activate -- <cmd>`), call the scripts directly:
+The commands (`quantize-fp8`, `quantize-llmc`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -398,14 +398,14 @@ jobs:
       - uses: flox/activate-action@v1
         with:
           command: |
-            bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+            quantize-fp8 --online --json Qwen/Qwen3-8B > result.json
             cat result.json
 ```
 
 For non-GitHub CI (GitLab, CircleCI, Jenkins), install Flox on the runner and use `flox activate --`:
 
 ```bash
-flox activate -- bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > result.json
+flox activate -- quantize-fp8 --online --json Qwen/Qwen3-8B > result.json
 ```
 
 ### Key behaviors for automation
@@ -422,12 +422,12 @@ flox activate -- bash scripts/quantize-fp8.sh --online --json Qwen/Qwen3-8B > re
 ```bash
 #!/usr/bin/env bash
 # Quantize a list of models, collect results
-# Run inside flox activate, or use: flox activate -- bash this-script.sh
+# Run inside flox activate, or use: flox activate -- bash batch-quantize.sh
 models=(Qwen/Qwen3-8B meta-llama/Llama-3.1-8B-Instruct google/gemma-3-4b-it)
 
 for model in "${models[@]}"; do
   echo "--- $model ---" >&2
-  bash scripts/quantize-llmc.sh --online --json "$model" >> results.jsonl
+  quantize-llmc --online --json "$model" >> results.jsonl
 done
 ```
 

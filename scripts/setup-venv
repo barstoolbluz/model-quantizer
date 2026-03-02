@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Provision a uv venv with all Python packages from PyPI.
+# Called by the Flox on-activate hook. Expects $VENV_DIR to be set.
+set -euo pipefail
+
+_marker="$VENV_DIR/.setup_done"
+
+# Idempotent — skip if a previous run completed successfully.
+if [ -f "$_marker" ]; then
+  exit 0
+fi
+
+# Serialize concurrent activations (e.g. two terminals, CI parallel jobs).
+_lockdir="$(dirname "$VENV_DIR")"
+mkdir -p "$_lockdir"
+exec 9>"$_lockdir/.setup-venv.lock"
+flock -n 9 || { echo "Another setup-venv is running, waiting..."; flock 9; }
+
+# Re-check marker after acquiring lock — the other process may have finished.
+if [ -f "$_marker" ]; then
+  exit 0
+fi
+
+# Create venv if it doesn't already exist (partial previous run).
+if [ ! -d "$VENV_DIR" ]; then
+  echo "Creating uv venv..."
+  uv venv --python python3 --system-site-packages "$VENV_DIR"
+fi
+
+echo "Installing Python packages via uv..."
+VIRTUAL_ENV="$VENV_DIR" uv pip install \
+  torchao transformers accelerate safetensors huggingface-hub \
+  autoawq llmcompressor
+
+# Remove PyPI torch so Python falls through to the Flox-provided
+# CUDA torch via --system-site-packages.
+VIRTUAL_ENV="$VENV_DIR" uv pip uninstall torch 2>/dev/null || true
+
+# AutoAWQ compat patches for transformers 4.52+:
+# 1. PytorchGELUTanh was renamed to GELUTanh.
+sed -i 's/PytorchGELUTanh/GELUTanh/g' \
+  "$VENV_DIR/lib/python3.13/site-packages/awq/quantize/scale.py"
+
+# 2. Catcher class needs __getattr__ to proxy attributes (e.g.
+#    attention_type) from the wrapped decoder layer, otherwise
+#    transformers 4.57+ crashes during calibration.
+_quantizer="$VENV_DIR/lib/python3.13/site-packages/awq/quantize/quantizer.py"
+if ! grep -q '__getattr__' "$_quantizer"; then
+  sed -i '/class Catcher(nn.Module):/,/def forward(self, \*args, \*\*kwargs):/{
+    /def forward(self, \*args, \*\*kwargs):/i\
+\            def __getattr__(self, name):\
+\                try:\
+\                    return super().__getattr__(name)\
+\                except AttributeError:\
+\                    return getattr(self.module, name)\
+
+  }' "$_quantizer"
+fi
+
+# 3. Suppress AWQ deprecation notice.  AWQ __init__.py calls
+#    warnings.simplefilter("default", DeprecationWarning) which
+#    overrides PYTHONWARNINGS=ignore, then fires a DeprecationWarning.
+_awq_init="$VENV_DIR/lib/python3.13/site-packages/awq/__init__.py"
+if grep -q 'simplefilter.*DeprecationWarning' "$_awq_init"; then
+  sed -i '/simplefilter.*DeprecationWarning/d; /warnings\.warn(_FINAL_DEV_MESSAGE/d' "$_awq_init"
+fi
+
+touch "$_marker"
+echo "Done."

@@ -82,12 +82,7 @@ on_err() {
 }
 trap on_err ERR
 
-usage() {
-  cat >&2 <<'USAGE'
-Usage:
-  quantize-awq-prod-hardened.sh [--json] [--smoke-test {full|fast|off}] <model-id> [bits] [group-size]
-USAGE
-}
+usage() { sed -n '2,65s/^# \?//p' "$0"; }
 
 # --------------------------
 # Parse flags
