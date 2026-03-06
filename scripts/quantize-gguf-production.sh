@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# quantize-gguf.sh — Convert Hugging Face models to GGUF via llama.cpp.
+# quantize-gguf-production.sh — Convert Hugging Face models to GGUF via llama.cpp.
 #
 # Two-phase pipeline:
 #   1. convert_hf_to_gguf.py: HF safetensors → F16/BF16 GGUF
 #   2. llama-quantize: F16/BF16 GGUF → quantized GGUF
 #
 # Usage:
-#   quantize-gguf [--json|--json-strict] <model-id> [quant-type] [options]
+#   quantize-gguf-production [--json|--json-strict] <model-id> [quant-type] [options]
 #
 # Positional:
 #   model-id              Hugging Face model ID (e.g. Qwen/Qwen3-8B)
