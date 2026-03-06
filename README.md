@@ -12,10 +12,10 @@ This repository is a [Flox](https://flox.dev) environment. Flox is a package man
 Running `flox activate` does the following:
 
 1. Provides Python 3.13 and PyTorch 2.9.1 with CUDA support from the Flox catalog (no pip/conda)
-2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, gguf
+2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, gguf, sentencepiece
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
-5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, `quantize-gguf`, and `list-models` commands (from the `model-quantizer` package)
+5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -52,13 +52,14 @@ quantize-llmc Qwen/Qwen3-8B
 quantize-llmc Qwen/Qwen3-8B gptq --online
 
 # GGUF for llama.cpp ecosystem (ollama, LM Studio, koboldcpp)
-quantize-gguf Qwen/Qwen3-8B Q4_K_M
+quantize-gguf-local Qwen/Qwen3-8B Q4_K_M       # fast, dev/iteration
+quantize-gguf-production Qwen/Qwen3-8B Q4_K_M   # validated, CI/pipeline
 
 # List cached source and quantized models
 list-models
 ```
 
-All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` (FP8, LLMC) or set `HF_OFFLINE=0` (AWQ) to download models on the fly. If `HF_TOKEN` is set in your shell environment, the HuggingFace libraries will use it automatically for gated model access.
+All scripts default to offline mode, so models must already be in the cache directory. Pass `--online` (FP8, LLMC, GGUF) or set `HF_OFFLINE=0` (AWQ) to download models on the fly. AWQ uses environment variables rather than CLI flags for most configuration — see [AWQ Environment Variables](#awq-environment-variables). If `HF_TOKEN` is set in your shell environment, the HuggingFace libraries will use it automatically for gated model access.
 
 The cache directory defaults to `$FLOX_ENV_PROJECT` (models live under `$FLOX_ENV_PROJECT/hub/models--*/`) but can be pointed anywhere — either by overriding `MODEL_CACHE_DIR` at activation time or by editing the default in `.flox/env/manifest.toml`:
 
@@ -73,14 +74,14 @@ MODEL_CACHE_DIR=/data/models flox activate
 
 ## Features
 
-- Four quantization backends: Legacy AWQ (4-bit INT) (now deprecated; use with older models only); FP8 torchao (E4M3); LLM Compressor (FP8, GPTQ, W8A8, NVFP4); GGUF (llama.cpp ecosystem)
+- Four quantization backends: AWQ 4-bit INT ([AutoAWQ](https://github.com/casper-hansen/AutoAWQ) is unmaintained; compatibility patches are applied automatically — see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches)); FP8 torchao (E4M3); LLM Compressor (FP8, GPTQ, W8A8, NVFP4); GGUF (llama.cpp ecosystem)
 - Offline-first: all scripts default to cache-only model loading
 - HF hub cache output layout: quantized models appear as siblings of source models, ready for vLLM
 - Content-addressed output: each run produces a deterministic snapshot ID derived from a full configuration fingerprint; identical parameters always map to the same output path
 - Idempotent: re-running with the same parameters skips quantization if output already exists
 - Concurrent-safe: file-level locking prevents races when multiple quantization jobs target the same output directory
 - Smoke tests: optional forward pass and token generation on quantized output to verify correctness before publishing
-- JSON output mode: machine-readable status for pipeline integration (`--json` on all four scripts)
+- JSON output mode: machine-readable status for pipeline integration (`--json` on all quantization scripts)
 - Checksum manifests (AWQ): opt-in SHA-256 checksums for all output files
 - CI-ready: same Flox environment in local dev and CI, with GitHub Actions support (see [CI / Pipeline Usage](#ci--pipeline-usage))
 - Auto-provisioned Python venv with PyPI packages on first activation
@@ -113,7 +114,7 @@ Output model is saved as `<model-id>-AWQ` in the cache directory.
 
 ### FP8 via torchao (`quantize-fp8`)
 
-Uses [torchao](https://github.com/pytorch/ao) to convert BF16 weights to FP8 E4M3 (weight-only, data-free). Native hardware support on Hopper (SM90) and Blackwell (SM120). ~2x compression with near-zero quality loss.
+Uses [torchao](https://github.com/pytorch/ao) to convert BF16 weights to FP8 E4M3 (weight-only, data-free). Approximately 2x compression vs BF16. Native hardware acceleration on Hopper SM90 (H100, H200) and Blackwell SM120 (RTX 5090, B200). Note: L40S is Ada Lovelace SM89, not Hopper — it does not have native FP8 compute but can still load FP8 checkpoints via dequantization.
 
 ```bash
 # Default: offline, auto device selection
@@ -174,34 +175,53 @@ quantize-llmc --json Qwen/Qwen3-8B
 
 Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The default is `open_platypus`. Pass `--online` if the dataset is not already cached.
 
-### GGUF (`quantize-gguf`)
+### GGUF (`quantize-gguf-local` / `quantize-gguf-production`)
 
-Uses [llama.cpp](https://github.com/ggml-org/llama.cpp) to convert HuggingFace models to GGUF format for the llama.cpp inference ecosystem (ollama, LM Studio, koboldcpp). Two-phase pipeline: convert HF safetensors to F16 GGUF, then quantize to the target type. CPU-only — no GPU required.
+Uses [llama.cpp](https://github.com/ggml-org/llama.cpp) to convert HuggingFace models to GGUF format for the llama.cpp inference ecosystem (ollama, LM Studio, koboldcpp). Two-phase pipeline: convert HF safetensors to F16 GGUF, then quantize to the target type.
+
+Two variants are provided:
+
+- **`quantize-gguf-local`** — fast, lightweight. Performs basic file-existence checks on output. Best for local development and quick iteration.
+- **`quantize-gguf-production`** — adds GGUF structural validation (magic, version, tensor count, alignment, data region bounds), artifact SHA-256 checksums, stage-based error tracking via `--json-strict` (each error includes the pipeline stage that failed), pre-publish integrity checks (fingerprint round-trip, metadata cross-validation, artifact hash verification), and extended fingerprints that include converter SHA-256, llama-quantize SHA-256, and gguf Python module version. Best for CI, serving pipelines, and long-term artifact storage.
+
+Both share the same CLI interface and output layout. The production variant adds extra options (`--json-strict`, `--smoke-ngl`, `--require-smoke-pass`).
+
+**When to choose:** Use `quantize-gguf-local` when iterating on quant types or testing new models — it's faster and has fewer dependencies. Use `quantize-gguf-production` when the output will be served in production, stored as a build artifact, or generated in CI where you need structured error reporting and artifact integrity guarantees.
 
 ```bash
 # Default: Q4_K_M (good balance of size and quality)
-quantize-gguf Qwen/Qwen3-8B
+quantize-gguf-local Qwen/Qwen3-8B
 
 # Higher quality, larger file
-quantize-gguf Qwen/Qwen3-8B Q5_K_M
+quantize-gguf-local Qwen/Qwen3-8B Q5_K_M
 
 # Maximum compression
-quantize-gguf Qwen/Qwen3-8B Q2_K
+quantize-gguf-local Qwen/Qwen3-8B Q2_K
 
 # With importance matrix for better quality at low bit-widths
-quantize-gguf Qwen/Qwen3-8B IQ4_XS --imatrix imatrix.dat
+quantize-gguf-local Qwen/Qwen3-8B IQ4_XS --imatrix imatrix.dat
 
 # Smoke test to verify output loads correctly
-quantize-gguf --smoke-test Qwen/Qwen3-8B Q4_K_M
+quantize-gguf-local --smoke-test Qwen/Qwen3-8B Q4_K_M
 
 # JSON output for scripting
-quantize-gguf --json Qwen/Qwen3-8B Q4_K_M
+quantize-gguf-local --json Qwen/Qwen3-8B Q4_K_M
 
 # Force rebuild
-quantize-gguf --force Qwen/Qwen3-8B Q4_K_M
+quantize-gguf-local --force Qwen/Qwen3-8B Q4_K_M
+
+# Production: validated output with artifact SHA-256
+quantize-gguf-production --json Qwen/Qwen3-8B Q4_K_M
+
+# Production: strict JSON errors + required smoke test
+quantize-gguf-production --json-strict --require-smoke-pass --smoke-ngl 99 Qwen/Qwen3-8B Q4_K_M
 ```
 
 The F16 intermediate GGUF is cached by default at `$FLOX_ENV_CACHE/gguf-staging/`, so quantizing the same model to multiple types (Q4_K_M, Q5_K_S, Q8_0) only runs the conversion once. Pass `--no-cache-f16` to disable caching.
+
+**Importance matrices** (`--imatrix`): An importance matrix records per-weight activation statistics from a calibration corpus. Providing one via `--imatrix imatrix.dat` improves quality for aggressive quant types — particularly the IQ-series (IQ2_XXS through IQ4_NL) and low-K types (Q2_K, Q3_K_\*). Generate one with `llama-imatrix` from llama.cpp against a representative text sample. Standard K-quants (Q4_K_M and above) see little benefit.
+
+**Intermediate precision** (`--convert-type`): The default `f16` is appropriate for most models. Use `bf16` if the source model was trained in BF16 and you want to preserve the original precision through the intermediate GGUF stage; this avoids the minor rounding introduced by the F16 conversion.
 
 Output model is saved as `<model-id>-GGUF-<TYPE>` in the cache directory.
 
@@ -228,6 +248,22 @@ Output model is saved as `<model-id>-GGUF-<TYPE>` in the cache directory.
 | 14B | 28 GB | 8 GB | 14 GB | ~7 GB | ~9 GB |
 | 32B | 64 GB | 18 GB | 32 GB | ~16 GB | ~20 GB |
 | 70B | 140 GB | 40 GB | 70 GB | ~35 GB | ~43 GB |
+
+GGUF rows apply equally to both `quantize-gguf-local` and `quantize-gguf-production` — the quantization output is identical; only the validation level differs. See [GGUF](#gguf-quantize-gguf-local--quantize-gguf-production) for details.
+
+### Data-Free vs Calibration-Based Quantization
+
+| Method | Calibration Required | Notes |
+|--------|---------------------|-------|
+| FP8 torchao | No (data-free) | Static weight cast to E4M3 |
+| FP8 dynamic/block (LLMC) | No (data-free) | Dynamic per-tensor or per-block scaling |
+| GGUF (all types) | No (data-free) | Optional `--imatrix` improves low-bit quality |
+| AWQ 4-bit | Yes (built-in default) | Uses calibration corpus for activation-aware quantization |
+| W4A16 GPTQ (LLMC) | Yes | Requires `--online` or local dataset |
+| W8A8 SmoothQuant (LLMC) | Yes | Requires `--online` or local dataset |
+| NVFP4 (LLMC) | Yes | Requires `--online` or local dataset |
+
+Data-free methods are faster, work fully offline, and produce deterministic output. Calibration-based methods adapt quantization parameters to the model's weight distribution, generally achieving better quality at the same bit-width — but require a representative dataset and network access (unless using a local dataset via `--dataset-path`).
 
 
 ## Output Layout
@@ -339,8 +375,11 @@ quantize-fp8 <model-id> [options]
 
 ### GGUF Options
 
+Both `quantize-gguf-local` and `quantize-gguf-production` share this core interface:
+
 ```
-quantize-gguf <model-id> [quant-type] [options]
+quantize-gguf-local <model-id> [quant-type] [options]
+quantize-gguf-production <model-id> [quant-type] [options]
 
 Quant types: Q2_K, Q3_K_S, Q3_K_M, Q3_K_L, Q4_0, Q4_1, Q4_K_S, Q4_K_M,
              Q5_0, Q5_1, Q5_K_S, Q5_K_M, Q6_K, Q8_0, F16, F32,
@@ -360,8 +399,16 @@ Quant types: Q2_K, Q3_K_S, Q3_K_M, Q3_K_L, Q4_0, Q4_1, Q4_K_S, Q4_K_M,
       --smoke-test            Load output and generate tokens via llama-completion
       --smoke-prompt STR      Smoke test prompt (default: "Hello")
       --smoke-tokens N        Smoke test token count (default: 8)
-      --lock-timeout N        Lock wait seconds (0=fail-fast, default: 0)
+      --lock-timeout N        Lock wait seconds (0=fail-fast, -1=unlimited, default: 0)
       --json                  JSON output on stdout (logs to stderr)
+```
+
+`quantize-gguf-production` adds:
+
+```
+      --json-strict           Emit structured JSON on errors (not just success)
+      --smoke-ngl N           GPU layers for smoke test (default: 0 = CPU)
+      --require-smoke-pass    Make smoke test failure fatal
 ```
 
 ### LLM Compressor Options
@@ -421,16 +468,26 @@ General:
   --json                   JSON output on stdout (logs to stderr)
 ```
 
+### list-models Options
+
+```
+list-models [cache-dir]
+```
+
+Lists all HuggingFace models in the cache directory, showing model ID, total size, snapshot count, and detected quantization type (`[AWQ]`, `[FP8-TORCHAO]`, `[compressed-tensors]`, `[GGUF]`, `[quantized]`). The optional positional `cache-dir` argument overrides `$MODEL_CACHE_DIR`. Pass `-h` for usage help. `list-models` does not support `--json`.
+
 
 ## Advanced Features
 
 ### Locking
 
-All four scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC and GGUF scripts use `flock` with `--lock-timeout`.
+All five quantization scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC and GGUF scripts use `flock` with `--lock-timeout`. Lock timeout behavior: `0` (default) fails immediately if the lock is held, `N > 0` waits up to N seconds, `-1` waits indefinitely.
+
+The production GGUF script also holds a separate `flock` on the F16 intermediate cache directory, allowing safe concurrent quantization of the same model to multiple types (e.g., Q4_K_M and Q5_K_S in parallel) without duplicate F16 conversions.
 
 ### Fingerprinting
 
-All four scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. GGUF hashes the model ID, source commit, quant type, convert type, imatrix SHA-256, script SHA, and llama.cpp version. Identical configurations always produce the same output path.
+All five quantization scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. GGUF local hashes the model ID, source commit, quant type, convert type, imatrix SHA-256, script SHA, and llama.cpp version (7 fields). GGUF production extends this with converter SHA-256 (`convert_hf_to_gguf.py`), llama-quantize SHA-256, gguf Python module version, and trust_remote_code (11 fields). Identical configurations always produce the same output path.
 
 ### Determinism
 
@@ -441,11 +498,13 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 - **AWQ**: `--smoke-test full` (default) reloads the saved checkpoint and runs a forward pass plus short generation. `fast` tests the in-memory model immediately after quantization. `off` skips generation but still validates output structure.
 - **FP8**: `--smoke-test` loads the output checkpoint and generates one token.
 - **LLMC**: `--validate` spawns a separate vLLM process to load the checkpoint and run generation, verifying the output is a valid vLLM-loadable model.
-- **GGUF**: `--smoke-test` runs `llama-completion` to load the output GGUF and generate a short sequence, verifying the file is valid and loadable.
+- **GGUF** (both variants): `--smoke-test` runs `llama-completion` to load the output GGUF and generate a short sequence, verifying the file is valid and loadable. The production variant adds `--smoke-ngl` to control GPU offloading and `--require-smoke-pass` to make failure fatal.
+
+> **Note:** The smoke test flag is named differently across scripts for historical reasons: `--smoke-test full|fast|off` for AWQ, `--smoke-test` (boolean) for FP8 and GGUF, and `--validate` for LLMC. All serve the same purpose — verifying the quantized output loads and generates tokens correctly.
 
 ### JSON Mode
 
-All four scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. GGUF includes quant type, GGUF filename, file size, and smoke test results. Successful runs (`ok`) include timing.
+All five quantization scripts support `--json` for machine-readable output on stdout (logs go to stderr); `list-models` does not support `--json`. Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. GGUF includes quant type, GGUF filename, file size, and smoke test results; the production variant also includes `artifact_sha256`. The production variant additionally supports `--json-strict` which emits structured JSON on both success and error. Error objects include a `stage` field indicating where the failure occurred (one of: `startup`, `preflight`, `locking`, `source-resolution`, `f16-conversion`, `quantization`, `artifact-validation`, `smoke-test`, `publish`, `complete`). Successful runs (`ok`) include timing.
 
 
 ## CI / Pipeline Usage
@@ -456,7 +515,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-The commands (`quantize-fp8`, `quantize-llmc`, `quantize-gguf`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
+The commands (`quantize-fp8`, `quantize-llmc`, `quantize-gguf-local`, `quantize-gguf-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -484,9 +543,9 @@ flox activate -- quantize-fp8 --online --json Qwen/Qwen3-8B > result.json
 - **Exit codes**: 0 on success or if output already exists, 1 on error
 - **Idempotent**: re-running with the same parameters detects existing output and exits immediately (JSON reports `"status": "exists"`)
 - **`--force`**: bypasses the exists check and re-quantizes from scratch
-- **Locking**: concurrent jobs targeting the same output serialize automatically via file locks; the second job waits or skips
+- **Locking**: concurrent jobs targeting the same output serialize automatically via file locks. Lock timeout is configurable: `--lock-timeout 0` (default) fails immediately if the lock is held, `--lock-timeout N` waits up to N seconds, `--lock-timeout -1` waits indefinitely
 - **`--json`**: structured output for parsing; logs on stderr won't pollute stdout
-- **`HF_TOKEN`**: set in CI secrets for gated model access — the HuggingFace libraries pick it up automatically
+- **`HF_TOKEN`**: set in CI secrets for gated model access — the HuggingFace libraries pick it up automatically. For local development, export it in your shell profile or run `huggingface-cli login`
 
 ### Batch quantization example
 
@@ -548,10 +607,10 @@ PyPI torch is automatically removed after installation so Python falls through t
 ## System Requirements
 
 - **OS**: Linux (x86\_64 or aarch64)
-- **GPU**: NVIDIA GPU with CUDA support. FP8 methods require SM90+ (Hopper: H100, H200, L40S) or SM120+ (Blackwell: RTX 5090, B200). AWQ and GPTQ work on all CUDA GPUs.
+- **GPU**: NVIDIA GPU with CUDA support. FP8 methods require SM90+ (Hopper: H100, H200) or SM120+ (Blackwell: RTX 5090, B200) for native hardware acceleration; L40S is Ada Lovelace (SM89) and does not have native FP8 compute. AWQ and GPTQ work on all CUDA GPUs. GGUF quantization and inference are CPU-only and do not require a GPU.
 - **Driver**: NVIDIA driver compatible with CUDA 12.x (driver 525+)
 - **VRAM**: Depends on model size. 7-8B models need ~16 GB for loading + quantization workspace. AWQ and GPTQ 4-bit outputs fit larger models in less VRAM at inference time.
-- **Disk**: Source model + quantized output. Budget 1.5-2x the source model size for the quantization workspace.
+- **Disk**: Source model + quantized output. HuggingFace-format methods (AWQ, FP8, LLMC) need ~2x the source model size. GGUF needs ~2.5x when caching the F16 intermediate (shared across quant types), or ~2x with `--no-cache-f16`.
 - **Flox**: must be installed (see [Setup](#setup))
 
 
