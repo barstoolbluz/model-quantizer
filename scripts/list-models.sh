@@ -31,6 +31,14 @@ detect_quant_type() {
     local snap_dir="$model_dir/snapshots"
     [ -d "$snap_dir" ] || return 0
 
+    # Check for GGUF files first (GGUF dirs don't have config.json).
+    for snap in "$snap_dir"/*/; do
+        if ls "$snap"/*.gguf >/dev/null 2>&1; then
+            echo " [GGUF]"
+            return 0
+        fi
+    done
+
     local config=""
     for snap in "$snap_dir"/*/; do
         [ -f "$snap/config.json" ] && config="$snap/config.json" && break

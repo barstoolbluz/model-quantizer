@@ -3,6 +3,17 @@
   "manifest": {
     "version": 1,
     "install": {
+      "gcc-unwrapped": {
+        "pkg-path": "gcc-unwrapped"
+      },
+      "llama-cpp": {
+        "pkg-path": "flox-cuda/llama-cpp",
+        "pkg-group": "llama-cpp",
+        "systems": [
+          "x86_64-linux",
+          "aarch64-linux"
+        ]
+      },
       "model-quantizer": {
         "pkg-path": "flox/model-quantizer",
         "pkg-group": "model-quantizer",
@@ -24,6 +35,9 @@
       "uv": {
         "pkg-path": "uv",
         "pkg-group": "uv"
+      },
+      "zlib": {
+        "pkg-path": "zlib"
       }
     },
     "vars": {
@@ -46,6 +60,202 @@
     }
   },
   "packages": [
+    {
+      "attr_path": "model-quantizer",
+      "broken": false,
+      "derivation": "/nix/store/irxxcfvxw65fc51mn9xwql79pdccrpld-model-quantizer-0.2.0.drv",
+      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
+      "install_id": "model-quantizer",
+      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "name": "model-quantizer-0.2.0",
+      "pname": "model-quantizer",
+      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "rev_count": 5,
+      "rev_date": "2026-03-02T00:48:56Z",
+      "scrape_date": "2026-03-02T00:59:07.703812632Z",
+      "stabilities": [
+        "unstable",
+        "staging",
+        "stable"
+      ],
+      "unfree": false,
+      "version": "0.2.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/4xbh46blfnq2aylkcwgpcz77n46mc897-model-quantizer-0.2.0"
+      },
+      "system": "aarch64-linux",
+      "group": "model-quantizer",
+      "priority": 5
+    },
+    {
+      "attr_path": "model-quantizer",
+      "broken": false,
+      "derivation": "/nix/store/mwpz6wvc19bwr5fhnq7z4l5qiqxyhs1h-model-quantizer-0.2.0.drv",
+      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
+      "install_id": "model-quantizer",
+      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "name": "model-quantizer-0.2.0",
+      "pname": "model-quantizer",
+      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
+      "rev_count": 5,
+      "rev_date": "2026-03-02T00:48:56Z",
+      "scrape_date": "2026-03-02T00:59:07.703815396Z",
+      "stabilities": [
+        "unstable",
+        "staging",
+        "stable"
+      ],
+      "unfree": false,
+      "version": "0.2.0",
+      "outputs_to_install": [
+        "out"
+      ],
+      "outputs": {
+        "out": "/nix/store/9ahldxzlrrz988znbz6wa2hnhrhkc2qi-model-quantizer-0.2.0"
+      },
+      "system": "x86_64-linux",
+      "group": "model-quantizer",
+      "priority": 5
+    },
+    {
+      "attr_path": "gcc-unwrapped",
+      "broken": false,
+      "derivation": "/nix/store/0a81i52qssnh7d1k4x2jawb33pm625fn-gcc-15.2.0.drv",
+      "description": "GNU Compiler Collection, version 15.2.0",
+      "install_id": "gcc-unwrapped",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "name": "gcc-15.2.0",
+      "pname": "gcc-unwrapped",
+      "rev": "8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "rev_count": 957538,
+      "rev_date": "2026-03-03T12:59:14Z",
+      "scrape_date": "2026-03-04T05:09:49.998275Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "15.2.0",
+      "outputs_to_install": [
+        "man",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "checksum": "/nix/store/in3gz6bk0vphc118r06k129gx6hnmxg1-gcc-15.2.0-checksum",
+        "info": "/nix/store/d4c0a4znnxg7f31mi738wd4kq0rxshqs-gcc-15.2.0-info",
+        "lib": "/nix/store/biihsjk1ndvj6sf06wv5rai9v4jsnzba-gcc-15.2.0-lib",
+        "libgcc": "/nix/store/kzymx3z7kaipzfjf1avkpvn68179nzgs-gcc-15.2.0-libgcc",
+        "man": "/nix/store/mfkqafr5fjisfdnakmh9n8njly3rg38f-gcc-15.2.0-man",
+        "out": "/nix/store/mgil30x3k6byp134r9xykjlii5a1l6id-gcc-15.2.0"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "gcc-unwrapped",
+      "broken": false,
+      "derivation": "/nix/store/s17kqafdpsrgbfygig72hgv04vr905yw-gcc-15.2.0.drv",
+      "description": "GNU Compiler Collection, version 15.2.0",
+      "install_id": "gcc-unwrapped",
+      "license": "GPL-3.0-or-later",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "name": "gcc-15.2.0",
+      "pname": "gcc-unwrapped",
+      "rev": "8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "rev_count": 957538,
+      "rev_date": "2026-03-03T12:59:14Z",
+      "scrape_date": "2026-03-04T06:12:10.575376Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "15.2.0",
+      "outputs_to_install": [
+        "man",
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "checksum": "/nix/store/13xvwpqh2dfmr8a56ip0w9z6nziq9bc0-gcc-15.2.0-checksum",
+        "info": "/nix/store/3jrj0znn7w75x6shbzpjj72cc685024f-gcc-15.2.0-info",
+        "lib": "/nix/store/ihpdbhy4rfxaixiamyb588zfc3vj19al-gcc-15.2.0-lib",
+        "libgcc": "/nix/store/97rn2wpm09db8278qzjvbss9ybxhfsxf-gcc-15.2.0-libgcc",
+        "man": "/nix/store/qy3p4skw9vvrlfwslgvdsrf4dzzfgzrs-gcc-15.2.0-man",
+        "out": "/nix/store/sca0pf46jmxva40qahkcwys5c1lvk6n2-gcc-15.2.0"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "zlib",
+      "broken": false,
+      "derivation": "/nix/store/hrh0zndpzcl6xb5qfvbbk1ggk6hp756i-zlib-1.3.1.drv",
+      "description": "Lossless data-compression library",
+      "install_id": "zlib",
+      "license": "Zlib",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "name": "zlib-1.3.1",
+      "pname": "zlib",
+      "rev": "8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "rev_count": 957538,
+      "rev_date": "2026-03-03T12:59:14Z",
+      "scrape_date": "2026-03-04T05:13:19.384592Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.3.1",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/cibwfc96l4adq8wf7nbm966nwxcpzkw9-zlib-1.3.1-dev",
+        "out": "/nix/store/wv20ws4j6hcxkvsja8y675v99ljrj9sg-zlib-1.3.1",
+        "static": "/nix/store/wxgmp0n4b0093ynyy22400adc8v7nhz1-zlib-1.3.1-static"
+      },
+      "system": "aarch64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
+    {
+      "attr_path": "zlib",
+      "broken": false,
+      "derivation": "/nix/store/070x6gfk1058zai25jmbrjbhf2y395j5-zlib-1.3.1.drv",
+      "description": "Lossless data-compression library",
+      "install_id": "zlib",
+      "license": "Zlib",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "name": "zlib-1.3.1",
+      "pname": "zlib",
+      "rev": "8c809a146a140c5c8806f13399592dbcb1bb5dc4",
+      "rev_count": 957538,
+      "rev_date": "2026-03-03T12:59:14Z",
+      "scrape_date": "2026-03-04T06:15:56.712292Z",
+      "stabilities": [
+        "unstable"
+      ],
+      "unfree": false,
+      "version": "1.3.1",
+      "outputs_to_install": [
+        "out",
+        "out"
+      ],
+      "outputs": {
+        "dev": "/nix/store/87y9237m9c9m9mxk9ajwdfmn78vz6w2y-zlib-1.3.1-dev",
+        "out": "/nix/store/vl8jkqpr0l3fac3cxiy4nwc5paiww1lv-zlib-1.3.1",
+        "static": "/nix/store/njwanmygmqc5vdhx22mnipiihqp39ysr-zlib-1.3.1-static"
+      },
+      "system": "x86_64-linux",
+      "group": "toplevel",
+      "priority": 5
+    },
     {
       "attr_path": "python3Packages.torch",
       "broken": false,
@@ -173,63 +383,63 @@
       "priority": 5
     },
     {
-      "attr_path": "model-quantizer",
+      "attr_path": "llama-cpp",
       "broken": false,
-      "derivation": "/nix/store/irxxcfvxw65fc51mn9xwql79pdccrpld-model-quantizer-0.2.0.drv",
-      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
-      "install_id": "model-quantizer",
-      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
-      "name": "model-quantizer-0.2.0",
-      "pname": "model-quantizer",
-      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
-      "rev_count": 5,
-      "rev_date": "2026-03-02T00:48:56Z",
-      "scrape_date": "2026-03-02T00:59:07.703812632Z",
+      "derivation": "/nix/store/hzp1z4givybzn8qwhm83y5462b3abqrz-llama-cpp-8124.drv",
+      "description": "Inference of Meta's LLaMA model (and others) in pure C/C++",
+      "install_id": "llama-cpp",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=cf59864ef8aa2e178cccedbe2c178185b0365705",
+      "name": "llama-cpp-8124",
+      "pname": "llama-cpp",
+      "rev": "cf59864ef8aa2e178cccedbe2c178185b0365705",
+      "rev_count": 956934,
+      "rev_date": "2026-03-02T06:35:32Z",
+      "scrape_date": "2026-03-06T00:28:30.119071129Z",
       "stabilities": [
-        "unstable",
-        "staging",
-        "stable"
+        "unstable"
       ],
       "unfree": false,
-      "version": "0.2.0",
+      "version": "8124",
       "outputs_to_install": [
         "out"
       ],
       "outputs": {
-        "out": "/nix/store/4xbh46blfnq2aylkcwgpcz77n46mc897-model-quantizer-0.2.0"
+        "dev": "/nix/store/8n4r3p63gyqfiz3mx0qbki75bfbfn82s-llama-cpp-8124-dev",
+        "out": "/nix/store/32bnpx6nwjjdx8551ciq7a34dk8f4ap3-llama-cpp-8124"
       },
       "system": "aarch64-linux",
-      "group": "model-quantizer",
+      "group": "llama-cpp",
       "priority": 5
     },
     {
-      "attr_path": "model-quantizer",
+      "attr_path": "llama-cpp",
       "broken": false,
-      "derivation": "/nix/store/mwpz6wvc19bwr5fhnq7z4l5qiqxyhs1h-model-quantizer-0.2.0.drv",
-      "description": "HuggingFace model quantization tools (AWQ, FP8, LLM Compressor)",
-      "install_id": "model-quantizer",
-      "locked_url": "git@github.com:barstoolbluz/build-model-quantizer.git?rev=6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
-      "name": "model-quantizer-0.2.0",
-      "pname": "model-quantizer",
-      "rev": "6fa3d3ab7812881eddfc143ff1b3eb78aafdcb28",
-      "rev_count": 5,
-      "rev_date": "2026-03-02T00:48:56Z",
-      "scrape_date": "2026-03-02T00:59:07.703815396Z",
+      "derivation": "/nix/store/6xlb159lbfkvqv4ks1ijjm7yfc9mfjik-llama-cpp-8124.drv",
+      "description": "Inference of Meta's LLaMA model (and others) in pure C/C++",
+      "install_id": "llama-cpp",
+      "license": "MIT",
+      "locked_url": "https://github.com/flox/nixpkgs?rev=cf59864ef8aa2e178cccedbe2c178185b0365705",
+      "name": "llama-cpp-8124",
+      "pname": "llama-cpp",
+      "rev": "cf59864ef8aa2e178cccedbe2c178185b0365705",
+      "rev_count": 956934,
+      "rev_date": "2026-03-02T06:35:32Z",
+      "scrape_date": "2026-03-06T00:28:30.119074634Z",
       "stabilities": [
-        "unstable",
-        "staging",
-        "stable"
+        "unstable"
       ],
       "unfree": false,
-      "version": "0.2.0",
+      "version": "8124",
       "outputs_to_install": [
         "out"
       ],
       "outputs": {
-        "out": "/nix/store/9ahldxzlrrz988znbz6wa2hnhrhkc2qi-model-quantizer-0.2.0"
+        "dev": "/nix/store/crlpzaipqx0696rh5yhwr666qfc78wv8-llama-cpp-8124-dev",
+        "out": "/nix/store/kdy5516bd9nyns114qaxgcq7dqw2wm2w-llama-cpp-8124"
       },
       "system": "x86_64-linux",
-      "group": "model-quantizer",
+      "group": "llama-cpp",
       "priority": 5
     }
   ]

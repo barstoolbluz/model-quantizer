@@ -12,6 +12,11 @@ torch.priority = 7
 model-quantizer.pkg-path = "flox/model-quantizer"
 model-quantizer.systems = ["x86_64-linux", "aarch64-linux"]
 model-quantizer.pkg-group = "model-quantizer"
+llama-cpp.pkg-path = "flox-cuda/llama-cpp"
+llama-cpp.pkg-group = "llama-cpp"
+llama-cpp.systems = ["x86_64-linux", "aarch64-linux"]
+gcc-unwrapped.pkg-path = "gcc-unwrapped"
+zlib.pkg-path = "zlib"
 
 
 [vars]

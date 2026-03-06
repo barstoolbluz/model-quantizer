@@ -1,6 +1,6 @@
 # Model Quantizer
 
-Flox environment for quantizing HuggingFace models for offline vLLM inference. Three quantization backends cover the full precision-compression spectrum: AWQ 4-bit, FP8 via torchao, and LLM Compressor (FP8, GPTQ, W8A8, NVFP4). Output is written in HuggingFace hub cache layout so vLLM discovers quantized checkpoints with `HF_HUB_OFFLINE=1` and no extra configuration.
+Flox environment for quantizing HuggingFace models for offline inference. Four quantization backends cover the full precision-compression spectrum: AWQ 4-bit, FP8 via torchao, LLM Compressor (FP8, GPTQ, W8A8, NVFP4), and GGUF for the llama.cpp ecosystem (ollama, LM Studio, koboldcpp). HuggingFace-format outputs are written in hub cache layout so vLLM discovers quantized checkpoints with `HF_HUB_OFFLINE=1`; GGUF outputs are single-file models ready for llama.cpp-based tools.
 
 Python 3.13 | PyTorch 2.9.1 (CUDA) | x86\_64-linux, aarch64-linux
 
@@ -12,10 +12,10 @@ This repository is a [Flox](https://flox.dev) environment. Flox is a package man
 Running `flox activate` does the following:
 
 1. Provides Python 3.13 and PyTorch 2.9.1 with CUDA support from the Flox catalog (no pip/conda)
-2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor
+2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, gguf
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
-5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, and `list-models` commands (from the `model-quantizer` package)
+5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, `quantize-gguf`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -51,6 +51,9 @@ quantize-llmc Qwen/Qwen3-8B
 # LLM Compressor -- W4A16 GPTQ (calibration-based)
 quantize-llmc Qwen/Qwen3-8B gptq --online
 
+# GGUF for llama.cpp ecosystem (ollama, LM Studio, koboldcpp)
+quantize-gguf Qwen/Qwen3-8B Q4_K_M
+
 # List cached source and quantized models
 list-models
 ```
@@ -70,14 +73,14 @@ MODEL_CACHE_DIR=/data/models flox activate
 
 ## Features
 
-- Three quantization backends: Legacy AWQ (4-bit INT) (now deprecated; use with older models only); FP8 torchao (E4M3); LLM Compressor (FP8, GPTQ, W8A8, NVFP4)
+- Four quantization backends: Legacy AWQ (4-bit INT) (now deprecated; use with older models only); FP8 torchao (E4M3); LLM Compressor (FP8, GPTQ, W8A8, NVFP4); GGUF (llama.cpp ecosystem)
 - Offline-first: all scripts default to cache-only model loading
 - HF hub cache output layout: quantized models appear as siblings of source models, ready for vLLM
 - Content-addressed output: each run produces a deterministic snapshot ID derived from a full configuration fingerprint; identical parameters always map to the same output path
 - Idempotent: re-running with the same parameters skips quantization if output already exists
 - Concurrent-safe: file-level locking prevents races when multiple quantization jobs target the same output directory
 - Smoke tests: optional forward pass and token generation on quantized output to verify correctness before publishing
-- JSON output mode: machine-readable status for pipeline integration (`--json` on all three scripts)
+- JSON output mode: machine-readable status for pipeline integration (`--json` on all four scripts)
 - Checksum manifests (AWQ): opt-in SHA-256 checksums for all output files
 - CI-ready: same Flox environment in local dev and CI, with GitHub Actions support (see [CI / Pipeline Usage](#ci--pipeline-usage))
 - Auto-provisioned Python venv with PyPI packages on first activation
@@ -171,6 +174,37 @@ quantize-llmc --json Qwen/Qwen3-8B
 
 Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The default is `open_platypus`. Pass `--online` if the dataset is not already cached.
 
+### GGUF (`quantize-gguf`)
+
+Uses [llama.cpp](https://github.com/ggml-org/llama.cpp) to convert HuggingFace models to GGUF format for the llama.cpp inference ecosystem (ollama, LM Studio, koboldcpp). Two-phase pipeline: convert HF safetensors to F16 GGUF, then quantize to the target type. CPU-only — no GPU required.
+
+```bash
+# Default: Q4_K_M (good balance of size and quality)
+quantize-gguf Qwen/Qwen3-8B
+
+# Higher quality, larger file
+quantize-gguf Qwen/Qwen3-8B Q5_K_M
+
+# Maximum compression
+quantize-gguf Qwen/Qwen3-8B Q2_K
+
+# With importance matrix for better quality at low bit-widths
+quantize-gguf Qwen/Qwen3-8B IQ4_XS --imatrix imatrix.dat
+
+# Smoke test to verify output loads correctly
+quantize-gguf --smoke-test Qwen/Qwen3-8B Q4_K_M
+
+# JSON output for scripting
+quantize-gguf --json Qwen/Qwen3-8B Q4_K_M
+
+# Force rebuild
+quantize-gguf --force Qwen/Qwen3-8B Q4_K_M
+```
+
+The F16 intermediate GGUF is cached by default at `$FLOX_ENV_CACHE/gguf-staging/`, so quantizing the same model to multiple types (Q4_K_M, Q5_K_S, Q8_0) only runs the conversion once. Pass `--no-cache-f16` to disable caching.
+
+Output model is saved as `<model-id>-GGUF-<TYPE>` in the cache directory.
+
 
 ## When to Use What
 
@@ -182,15 +216,18 @@ Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The d
 | W4A16 GPTQ (llmc) | ~3.5x | Good | All CUDA | 4-bit with vLLM-native format |
 | W8A8 SmoothQuant (llmc) | ~2x | Excellent | All CUDA | Production throughput, 8-bit |
 | NVFP4 (llmc) | ~4x | Good | SM120 | Native Blackwell 4-bit float |
+| GGUF Q4_K_M | ~3.5-4x | Good | CPU/Any | llama.cpp, ollama, LM Studio |
+| GGUF Q5_K_M | ~3x | Very good | CPU/Any | Higher quality GGUF |
+| GGUF Q8_0 | ~2x | Excellent | CPU/Any | Highest quality GGUF |
 
 ### Model Sizing Reference (32 GB VRAM)
 
-| Model | BF16 | AWQ/GPTQ 4-bit | FP8 | NVFP4 |
-|-------|------|----------------|-----|-------|
-| 7-8B | 16 GB | 4.5 GB | 8 GB | ~4 GB |
-| 14B | 28 GB | 8 GB | 14 GB | ~7 GB |
-| 32B | 64 GB | 18 GB | 32 GB | ~16 GB |
-| 70B | 140 GB | 40 GB | 70 GB | ~35 GB |
+| Model | BF16 | AWQ/GPTQ 4-bit | FP8 | NVFP4 | GGUF Q4_K_M |
+|-------|------|----------------|-----|-------|-------------|
+| 7-8B | 16 GB | 4.5 GB | 8 GB | ~4 GB | ~5 GB |
+| 14B | 28 GB | 8 GB | 14 GB | ~7 GB | ~9 GB |
+| 32B | 64 GB | 18 GB | 32 GB | ~16 GB | ~20 GB |
+| 70B | 140 GB | 40 GB | 70 GB | ~35 GB | ~43 GB |
 
 
 ## Output Layout
@@ -211,11 +248,17 @@ $QUANTIZED_OUTPUT_DIR/
         model.safetensors
         tokenizer.json
         tokenizer_config.json
-        FINGERPRINT.json                  # AWQ and FP8 only
+        FINGERPRINT.json                  # AWQ, FP8, and GGUF
         awq_quantize_meta.json            # AWQ only
+    models--Qwen--Qwen3-8B-GGUF-Q4_K_M/  # quantized output (GGUF example)
+      refs/main
+      snapshots/<snapshot-id>/
+        Qwen3-8B-Q4_K_M.gguf             # single GGUF file
+        FINGERPRINT.json
+        gguf_quantize_info.json
 ```
 
-The `<snapshot-id>` is a hash of the full quantization fingerprint (model ID, source commit, quant parameters, seed, etc.) — SHA-256 for AWQ, SHA-1 for FP8 and LLMC. This makes each output content-addressed: changing any parameter produces a new snapshot directory, while identical parameters reuse the existing one.
+The `<snapshot-id>` is a hash of the full quantization fingerprint (model ID, source commit, quant parameters, seed, etc.) — SHA-256 for AWQ and GGUF, SHA-1 for FP8 and LLMC. This makes each output content-addressed: changing any parameter produces a new snapshot directory, while identical parameters reuse the existing one.
 
 When `WRITE_LOCAL_REPO_LAYOUT=0`, output is written to a flat directory under `$QUANTIZED_OUTPUT_DIR/<model-id-suffix>/<snapshot-id>/`.
 
@@ -294,6 +337,33 @@ quantize-fp8 <model-id> [options]
       --json                    JSON output on stdout (logs to stderr)
 ```
 
+### GGUF Options
+
+```
+quantize-gguf <model-id> [quant-type] [options]
+
+Quant types: Q2_K, Q3_K_S, Q3_K_M, Q3_K_L, Q4_0, Q4_1, Q4_K_S, Q4_K_M,
+             Q5_0, Q5_1, Q5_K_S, Q5_K_M, Q6_K, Q8_0, F16, F32,
+             IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_XS, IQ3_S, IQ4_XS, IQ4_NL
+
+  -c, --cache-dir DIR         HF cache root
+  -o, --output-dir DIR        Output root
+  -r, --revision REV          HF revision (default: main)
+      --suffix STR            Override output suffix (default: -GGUF-<TYPE>)
+      --online                Allow network access
+      --trust-remote-code     Allow model repo custom code
+      --force                 Rebuild even if output exists
+      --imatrix FILE          Importance matrix for quantization
+      --convert-type TYPE     Intermediate precision: f16, bf16 (default: f16)
+      --no-cache-f16          Do not cache intermediate F16 GGUF
+      --threads N             Threads for llama-quantize (default: nproc)
+      --smoke-test            Load output and generate tokens via llama-completion
+      --smoke-prompt STR      Smoke test prompt (default: "Hello")
+      --smoke-tokens N        Smoke test token count (default: 8)
+      --lock-timeout N        Lock wait seconds (0=fail-fast, default: 0)
+      --json                  JSON output on stdout (logs to stderr)
+```
+
 ### LLM Compressor Options
 
 ```
@@ -356,11 +426,11 @@ General:
 
 ### Locking
 
-All three scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC script uses the same pattern with `--lock-timeout`.
+All four scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC and GGUF scripts use `flock` with `--lock-timeout`.
 
 ### Fingerprinting
 
-All three scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. Identical configurations always produce the same output path.
+All four scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. GGUF hashes the model ID, source commit, quant type, convert type, imatrix SHA-256, script SHA, and llama.cpp version. Identical configurations always produce the same output path.
 
 ### Determinism
 
@@ -371,10 +441,11 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 - **AWQ**: `--smoke-test full` (default) reloads the saved checkpoint and runs a forward pass plus short generation. `fast` tests the in-memory model immediately after quantization. `off` skips generation but still validates output structure.
 - **FP8**: `--smoke-test` loads the output checkpoint and generates one token.
 - **LLMC**: `--validate` spawns a separate vLLM process to load the checkpoint and run generation, verifying the output is a valid vLLM-loadable model.
+- **GGUF**: `--smoke-test` runs `llama-completion` to load the output GGUF and generate a short sequence, verifying the file is valid and loadable.
 
 ### JSON Mode
 
-All three scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. Successful runs (`ok`) include timing.
+All four scripts support `--json` for machine-readable output on stdout (logs go to stderr). Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. GGUF includes quant type, GGUF filename, file size, and smoke test results. Successful runs (`ok`) include timing.
 
 
 ## CI / Pipeline Usage
@@ -385,7 +456,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-The commands (`quantize-fp8`, `quantize-llmc`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
+The commands (`quantize-fp8`, `quantize-llmc`, `quantize-gguf`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -453,6 +524,9 @@ From Flox (declarative, pinned):
 |---------|---------|-------------|
 | `flox-cuda/python3Packages.torch` | 2.9.1 | PyTorch with CUDA support |
 | `uv` | latest | Python package installer |
+| `flox-cuda/llama-cpp` | latest | llama.cpp tools (convert-hf-to-gguf, llama-quantize, llama-completion) |
+| `gcc-unwrapped` | latest | C++ standard library (libstdc++) for PyPI native extensions |
+| `zlib` | latest | Compression library required by numpy |
 
 From PyPI via uv (auto-provisioned on first `flox activate`):
 
@@ -465,6 +539,8 @@ From PyPI via uv (auto-provisioned on first `flox activate`):
 | `huggingface-hub` | HuggingFace Hub client |
 | `autoawq` | AWQ 4-bit quantization |
 | `llmcompressor` | vLLM's unified quantization library |
+| `gguf` | GGUF format support (required by convert-hf-to-gguf) |
+| `sentencepiece` | Tokenizer library (required by some model conversions) |
 
 PyPI torch is automatically removed after installation so Python falls through to the Flox-provided CUDA-enabled torch via `--system-site-packages`.
 
@@ -497,7 +573,7 @@ rm -f  $QUANTIZED_OUTPUT_DIR/hub/models--<org>--<model>-<suffix>/.quantize.lock
 # FP8 locks (inside the output model directory)
 rm -rf $QUANTIZED_OUTPUT_DIR/hub/models--<org>--<model>-<suffix>/.quantize.lock
 
-# LLMC locks (in the output root)
+# LLMC / GGUF locks (in the output root)
 rm -f  $QUANTIZED_OUTPUT_DIR/.quantize-<model-slug>.lock
 ```
 
@@ -536,5 +612,6 @@ flox activate  # recreates venv from scratch
 - [AutoAWQ](https://github.com/casper-hansen/AutoAWQ) -- AWQ quantization library
 - [torchao](https://github.com/pytorch/ao) -- PyTorch native quantization
 - [llm-compressor](https://github.com/vllm-project/llm-compressor) -- vLLM's unified quantization
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) -- GGUF quantization and inference
 - [vLLM quantization docs](https://docs.vllm.ai/en/latest/features/quantization/index.html) -- Loading quantized models in vLLM
 - [Flox](https://flox.dev) -- Reproducible development environments
