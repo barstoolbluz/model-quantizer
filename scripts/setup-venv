@@ -30,7 +30,7 @@ fi
 echo "Installing Python packages via uv..."
 VIRTUAL_ENV="$VENV_DIR" uv pip install \
   torchao transformers accelerate safetensors huggingface-hub \
-  autoawq llmcompressor gguf sentencepiece
+  autoawq llmcompressor datasets gguf sentencepiece
 
 # Remove PyPI torch so Python falls through to the Flox-provided
 # CUDA torch via --system-site-packages.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# quantize-llmc.sh — Quantize models using vLLM's LLM Compressor (llmcompressor).
+# quantize-llmc-local.sh — Quantize models using vLLM's LLM Compressor (llmcompressor).
 #
 # Output: compressed-tensors checkpoints that vLLM can load directly.
 # Updated for behavior/docs as of 2026-02-27.
 #
 # Usage:
-#   quantize-llmc [--json] <model-id-or-path> [scheme] [options]
+#   quantize-llmc-local [--json] <model-id-or-path> [scheme] [options]
 #
 # Schemes:
 #   fp8       FP8 quantization (data-free; default)

@@ -12,10 +12,10 @@ This repository is a [Flox](https://flox.dev) environment. Flox is a package man
 Running `flox activate` does the following:
 
 1. Provides Python 3.13 and PyTorch 2.9.1 with CUDA support from the Flox catalog (no pip/conda)
-2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, gguf, sentencepiece
+2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, datasets, gguf, sentencepiece
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
-5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
+5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -46,10 +46,10 @@ quantize-awq Qwen/Qwen3-8B
 quantize-fp8 Qwen/Qwen3-8B
 
 # LLM Compressor -- FP8 dynamic (data-free, compressed-tensors for vLLM)
-quantize-llmc Qwen/Qwen3-8B
+quantize-llmc-local Qwen/Qwen3-8B
 
 # LLM Compressor -- W4A16 GPTQ (calibration-based)
-quantize-llmc Qwen/Qwen3-8B gptq --online
+quantize-llmc-local Qwen/Qwen3-8B gptq --online
 
 # GGUF for llama.cpp ecosystem (ollama, LM Studio, koboldcpp)
 quantize-gguf-local Qwen/Qwen3-8B Q4_K_M       # fast, dev/iteration
@@ -135,42 +135,62 @@ quantize-fp8 --json Qwen/Qwen3-8B
 
 Output model is saved as `<model-id>-FP8-TORCHAO` in the cache directory.
 
-### LLM Compressor (`quantize-llmc`)
+### LLM Compressor (`quantize-llmc-local` / `quantize-llmc-production`)
 
 Uses [llm-compressor](https://github.com/vllm-project/llm-compressor) (vLLM project) for unified quantization. Produces `compressed-tensors` format loaded natively by vLLM without format conversion.
 
 | Scheme | Command | Calibration | Output Suffix |
 |--------|---------|-------------|---------------|
-| FP8 dynamic | `quantize-llmc <model>` | No (data-free) | `-FP8-DYNAMIC` |
-| FP8 block | `quantize-llmc <model> fp8 --fp8-scheme block` | No (data-free) | `-FP8-BLOCK` |
-| W4A16 GPTQ | `quantize-llmc <model> gptq` | Yes | `-W4A16-GPTQ` |
-| W8A8 SmoothQuant | `quantize-llmc <model> w8a8` | Yes | `-W8A8-SMOOTHQUANT` |
-| NVFP4 | `quantize-llmc <model> nvfp4` | Yes | `-NVFP4` |
+| FP8 dynamic | `quantize-llmc-local <model>` | No (data-free) | `-FP8-DYNAMIC` |
+| FP8 block | `quantize-llmc-local <model> fp8 --fp8-scheme block` | No (data-free) | `-FP8-BLOCK` |
+| W4A16 GPTQ | `quantize-llmc-local <model> gptq` | Yes | `-W4A16-GPTQ` |
+| W8A8 SmoothQuant | `quantize-llmc-local <model> w8a8` | Yes | `-W8A8-SQ-GPTQ` |
+| NVFP4 | `quantize-llmc-local <model> nvfp4` | Yes | `-NVFP4` |
+
+Two variants are provided:
+
+- **`quantize-llmc-local`** — fast, lightweight. Best for local development and quick iteration.
+- **`quantize-llmc-production`** — adds strict shell mode with ERR traps, stage-based error tracking
+  via `--json-strict`, artifact manifests with SHA-256 checksums, atomic publish from temp dir, and
+  extended output validation. Best for CI, serving pipelines, and long-term artifact storage.
+
+Both share the same CLI interface and output layout. The production variant adds `--json-strict`.
+
+**When to choose:** Use `quantize-llmc-local` when iterating on quantization schemes or testing new
+models. Use `quantize-llmc-production` when the output will be served in production, stored as a
+build artifact, or generated in CI where you need structured error reporting and artifact integrity
+guarantees.
 
 ```bash
 # FP8 dynamic (default, data-free, no network needed)
-quantize-llmc Qwen/Qwen3-8B
+quantize-llmc-local Qwen/Qwen3-8B
 
 # W4A16 GPTQ with custom calibration parameters
-quantize-llmc Qwen/Qwen3-8B gptq --online --num-samples 1024 --seq-length 4096
+quantize-llmc-local Qwen/Qwen3-8B gptq --online --num-samples 1024 --seq-length 4096
 
 # W8A8 SmoothQuant
-quantize-llmc Qwen/Qwen3-8B w8a8 --online
+quantize-llmc-local Qwen/Qwen3-8B w8a8 --online
 
 # NVFP4 (Blackwell-native)
-quantize-llmc Qwen/Qwen3-8B nvfp4 --online
+quantize-llmc-local Qwen/Qwen3-8B nvfp4 --online
 
 # Validate output by loading in vLLM and running generation
-quantize-llmc Qwen/Qwen3-8B --validate --validate-prompt "Explain gravity."
+quantize-llmc-local Qwen/Qwen3-8B --validate --validate-prompt "Explain gravity."
 
 # Use a local calibration dataset
-quantize-llmc Qwen/Qwen3-8B gptq --dataset-path ./calibration.jsonl --text-column content
+quantize-llmc-local Qwen/Qwen3-8B gptq --dataset-path ./calibration.jsonl --text-column content
 
 # Sequential pipeline for large models that exceed GPU memory
-quantize-llmc Qwen/Qwen3-32B gptq --online --pipeline sequential
+quantize-llmc-local Qwen/Qwen3-32B gptq --online --pipeline sequential
 
 # JSON output for scripting
-quantize-llmc --json Qwen/Qwen3-8B
+quantize-llmc-local --json Qwen/Qwen3-8B
+
+# Production: validated output with artifact manifest
+quantize-llmc-production --json Qwen/Qwen3-8B
+
+# Production: strict JSON errors
+quantize-llmc-production --json-strict Qwen/Qwen3-8B gptq --online
 ```
 
 Schemes that require calibration (`gptq`, `w8a8`, `nvfp4`) need a dataset. The default is `open_platypus`. Pass `--online` if the dataset is not already cached.
@@ -413,8 +433,11 @@ Quant types: Q2_K, Q3_K_S, Q3_K_M, Q3_K_L, Q4_0, Q4_1, Q4_K_S, Q4_K_M,
 
 ### LLM Compressor Options
 
+Both `quantize-llmc-local` and `quantize-llmc-production` share this core interface:
+
 ```
-quantize-llmc <model-id> [scheme] [options]
+quantize-llmc-local <model-id> [scheme] [options]
+quantize-llmc-production <model-id> [scheme] [options]
 
 Schemes: fp8 (default), gptq, w8a8, nvfp4
 
@@ -468,6 +491,12 @@ General:
   --json                   JSON output on stdout (logs to stderr)
 ```
 
+`quantize-llmc-production` adds:
+
+```
+      --json-strict           Emit structured JSON on errors (not just success)
+```
+
 ### list-models Options
 
 ```
@@ -481,13 +510,13 @@ Lists all HuggingFace models in the cache directory, showing model ID, total siz
 
 ### Locking
 
-All five quantization scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC and GGUF scripts use `flock` with `--lock-timeout`. Lock timeout behavior: `0` (default) fails immediately if the lock is held, `N > 0` waits up to N seconds, `-1` waits indefinitely.
+All six quantization scripts implement file-level locking on the output directory to prevent concurrent quantization jobs from corrupting each other. The AWQ and FP8 scripts support both `flock` (preferred) and `mkdir`-based locks with configurable timeout and stale lock detection. The LLMC and GGUF scripts use `flock` with `--lock-timeout`. Lock timeout behavior: `0` (default) fails immediately if the lock is held, `N > 0` waits up to N seconds, `-1` waits indefinitely.
 
 The production GGUF script also holds a separate `flock` on the F16 intermediate cache directory, allowing safe concurrent quantization of the same model to multiple types (e.g., Q4_K_M and Q5_K_S in parallel) without duplicate F16 conversions.
 
 ### Fingerprinting
 
-All five quantization scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. GGUF local hashes the model ID, source commit, quant type, convert type, imatrix SHA-256, script SHA, and llama.cpp version (7 fields). GGUF production extends this with converter SHA-256 (`convert_hf_to_gguf.py`), llama-quantize SHA-256, gguf Python module version, and trust_remote_code (11 fields). Identical configurations always produce the same output path.
+All six quantization scripts compute content-addressed snapshot IDs by hashing a fingerprint of all configuration inputs. For AWQ this includes: model ID, source commit, quantization parameters (bits, group size, zero point), calibration settings, device map, dtype policy, seed, determinism flag, save format, shard size, and optionally library versions and system info. FP8 includes a similar set plus script version and output format. LLMC hashes the model ID, resolved commit, revision, scheme, FP8 options, calibration parameters, and pipeline options. GGUF local hashes the model ID, source commit, quant type, convert type, imatrix SHA-256, script SHA, and llama.cpp version (7 fields). GGUF production extends this with converter SHA-256 (`convert_hf_to_gguf.py`), llama-quantize SHA-256, gguf Python module version, and trust_remote_code (11 fields). Identical configurations always produce the same output path.
 
 ### Determinism
 
@@ -504,7 +533,7 @@ Set `DETERMINISTIC=1` (AWQ) or `--seed N` (LLMC) to improve reproducibility. The
 
 ### JSON Mode
 
-All five quantization scripts support `--json` for machine-readable output on stdout (logs go to stderr); `list-models` does not support `--json`. Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC includes scheme, validation status, output size, and timestamp. GGUF includes quant type, GGUF filename, file size, and smoke test results; the production variant also includes `artifact_sha256`. The production variant additionally supports `--json-strict` which emits structured JSON on both success and error. Error objects include a `stage` field indicating where the failure occurred (one of: `startup`, `preflight`, `locking`, `source-resolution`, `f16-conversion`, `quantization`, `artifact-validation`, `smoke-test`, `publish`, `complete`). Successful runs (`ok`) include timing.
+All six quantization scripts support `--json` for machine-readable output on stdout (logs go to stderr); `list-models` does not support `--json`. Each emits a JSON object with `status` (`ok` or `exists`), source model, and output path. AWQ and FP8 also include source commit, snapshot ID, revision, and smoke test results; FP8 adds device mode, format, and validation coverage. LLMC local includes scheme, validation status, output size, and timestamp. LLMC production adds `--json-strict` for structured JSON on both success and error, with stage-based error tracking. GGUF includes quant type, GGUF filename, file size, and smoke test results; the GGUF production variant also includes `artifact_sha256`. Both production variants (`quantize-llmc-production` and `quantize-gguf-production`) support `--json-strict` which emits structured JSON on both success and error. Error objects include a `stage` field indicating where the failure occurred (one of: `startup`, `preflight`, `locking`, `source-resolution`, `f16-conversion`, `quantization`, `artifact-validation`, `smoke-test`, `publish`, `complete`). Successful runs (`ok`) include timing.
 
 
 ## CI / Pipeline Usage
@@ -515,7 +544,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-The commands (`quantize-fp8`, `quantize-llmc`, `quantize-gguf-local`, `quantize-gguf-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
+The commands (`quantize-fp8`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -557,7 +586,7 @@ models=(Qwen/Qwen3-8B meta-llama/Llama-3.1-8B-Instruct google/gemma-3-4b-it)
 
 for model in "${models[@]}"; do
   echo "--- $model ---" >&2
-  quantize-llmc --online --json "$model" >> results.jsonl
+  quantize-llmc-local --online --json "$model" >> results.jsonl
 done
 ```
 
@@ -598,6 +627,7 @@ From PyPI via uv (auto-provisioned on first `flox activate`):
 | `huggingface-hub` | HuggingFace Hub client |
 | `autoawq` | AWQ 4-bit quantization |
 | `llmcompressor` | vLLM's unified quantization library |
+| `datasets` | HuggingFace Datasets (calibration data for GPTQ/W8A8/NVFP4) |
 | `gguf` | GGUF format support (required by convert-hf-to-gguf) |
 | `sentencepiece` | Tokenizer library (required by some model conversions) |
 

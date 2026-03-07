@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# quantize-llmc-hardened.sh — CI/prod-oriented wrapper for LLM Compressor quantization.
+# quantize-llmc-production.sh — CI/prod-oriented wrapper for LLM Compressor quantization.
 #
 # Output: compressed-tensors checkpoints that vLLM can load directly.
 #
@@ -13,7 +13,7 @@
 #   - JSON and JSON-strict modes for automation
 #
 # Usage:
-#   quantize-llmc-hardened [--json|--json-strict] <model-id-or-path> [scheme] [options]
+#   quantize-llmc-production [--json|--json-strict] <model-id-or-path> [scheme] [options]
 #
 # Schemes:
 #   fp8       FP8 quantization (data-free; default)

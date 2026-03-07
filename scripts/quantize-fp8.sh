@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# quantize-fp8-torchao-production-ready-fixed-v12.sh
+# quantize-fp8.sh
 #
 # Convert a Hugging Face causal LM to TorchAO FP8 weight-only (E4M3FN), then save
 # a static checkpoint under an HF-cache-like layout.
@@ -14,7 +14,7 @@
 # - Smoke test moves inputs to embedding device (works with device_map='auto')
 #
 # Usage:
-#   ./quantize-fp8-torchao-production-ready-fixed-v12.sh [--json] <model-id> [options]
+#   quantize-fp8 [--json] <model-id> [options]
 #
 # Options:
 #   -c, --cache-dir DIR           HF cache root (default: $MODEL_CACHE_DIR or ./models)
@@ -203,10 +203,16 @@ if [[ "$ONLINE" -eq 0 ]]; then
   export HF_DATASETS_OFFLINE=1
 fi
 
-# Roots (HF-cache-like)
+# Layout selection
+WRITE_LOCAL_REPO_LAYOUT="${WRITE_LOCAL_REPO_LAYOUT:-0}"
+
 SOURCE_ROOT="$CACHE_DIR/hub/models--$(hf_repo_dir "$MODEL_ID")"
 OUTPUT_MODEL_ID="${MODEL_ID}${OUT_SUFFIX}"
-OUT_ROOT="$OUTPUT_DIR/hub/models--$(hf_repo_dir "$OUTPUT_MODEL_ID")"
+if [[ "$WRITE_LOCAL_REPO_LAYOUT" == "1" ]]; then
+  OUT_ROOT="$OUTPUT_DIR/hub/models--$(hf_repo_dir "$OUTPUT_MODEL_ID")"
+else
+  OUT_ROOT="$OUTPUT_DIR/$(hf_repo_dir "$OUTPUT_MODEL_ID")"
+fi
 
 # Export config so Python preflight validates actual CLI-provided values.
 export QUANT_MIN_RATIO SMOKE_TEMPERATURE SMOKE_MAX_NEW_TOKENS LOCK_TTL_SECONDS MAX_SHARD_SIZE
@@ -481,7 +487,12 @@ stop_heartbeat() {
 }
 
 recent_tmp_activity() {
-  local snaps="$OUT_ROOT/snapshots"
+  local snaps
+  if [[ "$WRITE_LOCAL_REPO_LAYOUT" == "1" ]]; then
+    snaps="$OUT_ROOT/snapshots"
+  else
+    snaps="$OUT_ROOT"
+  fi
   [[ -d "$snaps" ]] || return 1
   # If a tmp dir was touched in the last 15 min, treat as active work.
   find "$snaps" -maxdepth 1 -type d -name '.tmp-*' -mmin -15 -print -quit 2>/dev/null | grep -q .
@@ -563,9 +574,14 @@ start_heartbeat
 early_cleanup() { stop_heartbeat || true; release_lock; }
 trap early_cleanup EXIT INT TERM
 
-SNAPSHOTS_DIR="$OUT_ROOT/snapshots"
-REFS_DIR="$OUT_ROOT/refs"
-mkdir -p "$SNAPSHOTS_DIR" "$REFS_DIR"
+if [[ "$WRITE_LOCAL_REPO_LAYOUT" == "1" ]]; then
+  SNAPSHOTS_DIR="$OUT_ROOT/snapshots"
+  REFS_DIR="$OUT_ROOT/refs"
+else
+  SNAPSHOTS_DIR="$OUT_ROOT"
+  REFS_DIR=""
+fi
+mkdir -p "$SNAPSHOTS_DIR"
 
 
 disk_space_check() {
@@ -1234,8 +1250,11 @@ write_ref() {
   printf '%s' "$value" > "$tmp"
   mv "$tmp" "$path"
 }
-write_ref "$REFS_DIR/main" "$OUT_SNAPSHOT_ID"
-write_ref "$REFS_DIR/$REVISION_REF_SAFE" "$OUT_SNAPSHOT_ID" 2>/dev/null || true
+if [[ "$WRITE_LOCAL_REPO_LAYOUT" == "1" ]]; then
+  mkdir -p "$REFS_DIR"
+  write_ref "$REFS_DIR/main" "$OUT_SNAPSHOT_ID"
+  write_ref "$REFS_DIR/$REVISION_REF_SAFE" "$OUT_SNAPSHOT_ID" 2>/dev/null || true
+fi
 
 if [[ -d "$BAK_SNAPSHOT_PATH" ]]; then
   safe_rm_rf "$BAK_SNAPSHOT_PATH"
