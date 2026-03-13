@@ -14,7 +14,7 @@ Running `flox activate` does the following:
 1. Provides Python 3.13 and PyTorch 2.9.1 with CUDA support from the Flox catalog (no pip/conda)
 2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, datasets, gguf, sentencepiece
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
-4. Applies compatibility patches for AutoAWQ (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches))
+4. Applies compatibility patches for AutoAWQ and FP8/torchao (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches) and [FP8 Compatibility Patches](#fp8-compatibility-patches))
 5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
@@ -602,6 +602,35 @@ AutoAWQ 0.2.9 is the last release and is no longer maintained. The environment a
 3. **Deprecation noise**: AWQ's `__init__.py` overrides Python's warning filters and emits a deprecation notice on every import. Patched to remove the `simplefilter` override and `warnings.warn` call.
 
 These patches are applied automatically during venv provisioning and do not require manual intervention.
+
+
+## FP8 Compatibility Patches
+
+TorchAO's FP8 weight-only quantization (`Float8WeightOnlyConfig`) produces `Float8Tensor` subclasses that store quantized data in `.qdata` (float8_e4m3fn) and per-row scales in `.scale` (float32). These tensor subclasses do not support low-level operations (`storage()`, `data_ptr()`, `view(-1)`) that safetensors and transformers rely on during `save_pretrained()`. The environment applies two categories of fixes:
+
+### Venv patches (applied by `setup-venv`)
+
+Five patches are applied to safetensors and transformers during venv provisioning:
+
+1. **`storage_ptr()` fallback** (safetensors `torch.py`): The original code returns `0` when `storage().data_ptr()` raises `NotImplementedError`, causing all FP8 tensors to appear as shared storage. Patched to catch `RuntimeError` as well and return `id(tensor)` — a unique identifier per tensor — so safetensors correctly detects disjoint tensors.
+
+2. **`_end_ptr()` wrapping** (safetensors `torch.py`): `view(-1)` and `data_ptr()` fail on Float8Tensor. Wrapped in try/except to fall back to `id(tensor)`.
+
+3. **`_end_ptr()` wrapping** (transformers `modeling_utils.py`): Same issue as above but in transformers' copy of the function. Uses `tensor.element_size()` instead of `_SIZE[tensor.dtype]`.
+
+4. **`_find_disjoint()` wrapping** (transformers `modeling_utils.py`): `tensor.data_ptr()` call wrapped in try/except to treat FP8 tensors as unique (non-shared).
+
+5. **`_find_identical()` wrapping** (transformers `modeling_utils.py`): Same pattern — prevents false positive shared-tensor detection for FP8 tensors.
+
+All patches are idempotent (guarded by `grep -q` for a unique marker string) and version-sensitive: if safetensors or transformers update to natively support FP8 tensor subclasses, the patches print a warning and skip. Targets: safetensors 0.7.0, transformers 5.3.0.
+
+### Script-level fixes
+
+The FP8 quantization scripts (`quantize-fp8-local.sh`, `quantize-fp8-production.sh`) apply two additional fixes:
+
+6. **Float8Tensor unwrapping**: Before calling `save_pretrained()`, the script extracts `.qdata` and `.scale` from each Float8Tensor into plain tensors (with `_scale` suffix for scales), then passes the unwrapped state dict via `state_dict=unwrapped`. This bypasses all remaining serialization issues.
+
+7. **Validation safetensors fallback** (local script only): Transformers 5.x always saves as safetensors regardless of the `safe_serialization` flag. The validation step now checks for `.safetensors` files as a fallback when `out_format="torch"` and no `.bin` files are found. The production script's `validate_saved_artifacts()` already checks both formats.
 
 
 ## Packages

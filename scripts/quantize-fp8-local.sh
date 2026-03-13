@@ -947,14 +947,32 @@ safe_serialization = (out_format == "safetensors")
 if safe_serialization and (not allow_safetensors):
     raise RuntimeError("--format safetensors requires --allow-safetensors.")
 
-print(f"Saving checkpoint to: {out_dir} (safe_serialization={safe_serialization})", file=out)
+print(f"Saving checkpoint to: {out_dir}", file=out)
 os.makedirs(out_dir, exist_ok=True)
 
-save_kwargs = dict(safe_serialization=safe_serialization)
+# Unwrap TorchAO tensor subclasses (e.g. Float8Tensor) into raw tensors
+# so that safetensors can serialize them.  Float8Tensor stores quantized
+# data in .qdata (float8_e4m3fn) and per-row scales in .scale (float32).
+raw_state_dict = model.state_dict()
+unwrapped = {}
+_has_fp8 = False
+for _k, _v in raw_state_dict.items():
+    if hasattr(_v, 'qdata') and hasattr(_v, 'scale'):
+        _has_fp8 = True
+        unwrapped[_k] = _v.qdata.contiguous()
+        unwrapped[_k + "_scale"] = _v.scale.contiguous()
+    elif isinstance(_v, torch.Tensor):
+        unwrapped[_k] = _v.contiguous()
+    else:
+        unwrapped[_k] = _v
+if _has_fp8:
+    print(f"Unwrapped {sum(1 for k in unwrapped if k.endswith('_scale'))} FP8 tensor subclasses", file=out)
+
+save_kwargs = {}
 if max_shard_size:
     save_kwargs["max_shard_size"] = max_shard_size
 
-model.save_pretrained(out_dir, **save_kwargs)
+model.save_pretrained(out_dir, state_dict=unwrapped, **save_kwargs)
 tok.save_pretrained(out_dir)
 
 cfg_path = os.path.join(out_dir, "config.json")
@@ -1101,6 +1119,10 @@ if out_format == "safetensors":
 index_json = os.path.join(ckpt_dir, "pytorch_model.bin.index.json")
 single_bin = os.path.join(ckpt_dir, "pytorch_model.bin")
 
+# transformers 5.x always saves as safetensors even when out_format="torch",
+# so check for safetensors files as a fallback before failing.
+st_fallback = sorted(glob.glob(os.path.join(ckpt_dir, "*.safetensors")))
+
 if os.path.exists(index_json):
     with open(index_json, "r", encoding="utf-8") as f:
         idx = json.load(f)
@@ -1110,8 +1132,15 @@ if os.path.exists(index_json):
     shards = [os.path.join(ckpt_dir, p) for p in sorted(set(wm.values()))]
 elif os.path.exists(single_bin):
     shards = [single_bin]
+elif st_fallback:
+    # Saved as safetensors despite out_format="torch" (transformers 5.x behavior)
+    for p in st_fallback:
+        if not file_nonempty(p):
+            fail(f"empty safetensors file: {os.path.basename(p)}")
+    print("Validation OK (safetensors fallback for torch format).", file=out)
+    sys.exit(0)
 else:
-    fail("could not find pytorch_model.bin or pytorch_model.bin.index.json")
+    fail("could not find pytorch_model.bin, pytorch_model.bin.index.json, or any .safetensors files")
 
 def looks_like_zip(path: str) -> bool:
     try:
