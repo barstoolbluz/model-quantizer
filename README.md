@@ -15,7 +15,7 @@ Running `flox activate` does the following:
 2. Creates a Python venv (first run only) and installs PyPI packages: torchao, transformers, accelerate, safetensors, huggingface-hub, autoawq, llmcompressor, datasets, gguf, sentencepiece
 3. Removes the PyPI torch so Python falls through to the Flox-provided CUDA-enabled build via `--system-site-packages`
 4. Applies compatibility patches for AutoAWQ and FP8/torchao (see [AutoAWQ Compatibility Patches](#autoawq-compatibility-patches) and [FP8 Compatibility Patches](#fp8-compatibility-patches))
-5. Provides `quantize-awq`, `quantize-fp8`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
+5. Provides `quantize-awq`, `quantize-fp8-local`, `quantize-fp8-production`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, and `list-models` commands (from the `model-quantizer` package)
 
 No Docker, no conda, no manual virtualenv management. Clone the repo, install Flox (<70MB), activate, quantize.
 
@@ -43,7 +43,7 @@ flox activate
 quantize-awq Qwen/Qwen3-8B
 
 # FP8 via torchao (native Hopper/Blackwell, ~2x smaller)
-quantize-fp8 Qwen/Qwen3-8B
+quantize-fp8-local Qwen/Qwen3-8B
 
 # LLM Compressor -- FP8 dynamic (data-free, compressed-tensors for vLLM)
 quantize-llmc-local Qwen/Qwen3-8B
@@ -112,25 +112,40 @@ quantize-awq --smoke-test off Qwen/Qwen3-8B
 
 Output model is saved as `<model-id>-AWQ` in the cache directory.
 
-### FP8 via torchao (`quantize-fp8`)
+### FP8 via torchao (`quantize-fp8-local` / `quantize-fp8-production`)
 
 Uses [torchao](https://github.com/pytorch/ao) to convert BF16 weights to FP8 E4M3 (weight-only, data-free). Approximately 2x compression vs BF16. Native hardware acceleration on Hopper SM90 (H100, H200) and Blackwell SM120 (RTX 5090, B200). Note: L40S is Ada Lovelace SM89, not Hopper — it does not have native FP8 compute but can still load FP8 checkpoints via dequantization.
 
+Two variants are provided:
+
+- **`quantize-fp8-local`** — fast, lightweight. Basic output validation. Best for local development and quick iteration.
+- **`quantize-fp8-production`** — adds `--json-strict` for structured JSON on both success and error, `--reload-validate-device` for reload validation, `--lock-mode`/`--lock-timeout` for stronger locking, and stage-based error tracking. Best for CI, serving pipelines, and long-term artifact storage.
+
+Both share the same CLI interface and output layout. The production variant adds extra options (see [FP8 Options](#fp8-torchao-options)).
+
+**When to choose:** Use `quantize-fp8-local` when iterating on FP8 quantization or testing new models. Use `quantize-fp8-production` when the output will be served in production, stored as a build artifact, or generated in CI where you need structured error reporting and artifact integrity guarantees.
+
 ```bash
 # Default: offline, auto device selection
-quantize-fp8 Qwen/Qwen3-8B
+quantize-fp8-local Qwen/Qwen3-8B
 
 # Force rebuild, run smoke test after
-quantize-fp8 --force --smoke-test Qwen/Qwen3-8B
+quantize-fp8-local --force --smoke-test Qwen/Qwen3-8B
 
 # Safetensors output (experimental)
-quantize-fp8 --allow-safetensors Qwen/Qwen3-8B
+quantize-fp8-local --allow-safetensors Qwen/Qwen3-8B
 
 # Custom shard size for large models
-quantize-fp8 --max-shard-size 4GB Qwen/Qwen3-8B
+quantize-fp8-local --max-shard-size 4GB Qwen/Qwen3-8B
 
 # JSON output for scripting
-quantize-fp8 --json Qwen/Qwen3-8B
+quantize-fp8-local --json Qwen/Qwen3-8B
+
+# Production: validated output with strict JSON errors
+quantize-fp8-production --json Qwen/Qwen3-8B
+
+# Production: reload validation on CPU
+quantize-fp8-production --json-strict --reload-validate-device cpu Qwen/Qwen3-8B
 ```
 
 Output model is saved as `<model-id>-FP8-TORCHAO` in the cache directory.
@@ -366,8 +381,11 @@ These are set in the `[vars]` section of `.flox/env/manifest.toml` and apply to 
 
 The FP8 script uses CLI flags for most configuration. It also respects `MODEL_CACHE_DIR` and `QUANTIZED_OUTPUT_DIR` (see Global Environment Variables above) and three version-gate env vars: `MIN_TORCH_VERSION` (default: `2.1.0`), `MIN_TRANSFORMERS_VERSION` (default: `4.40.0`), `MIN_TORCHAO_VERSION` (default: `0.10.0`).
 
+Both `quantize-fp8-local` and `quantize-fp8-production` share this core interface:
+
 ```
-quantize-fp8 <model-id> [options]
+quantize-fp8-local <model-id> [options]
+quantize-fp8-production <model-id> [options]
 
   -c, --cache-dir DIR           HF cache root
   -o, --output-dir DIR          Output root
@@ -391,6 +409,15 @@ quantize-fp8 <model-id> [options]
       --validate-zip-crc        Run zip CRC checks on .bin shards (slow)
       --quant-min-ratio FLOAT   Min fraction of quantized layers (default: 0.80)
       --json                    JSON output on stdout (logs to stderr)
+```
+
+`quantize-fp8-production` adds:
+
+```
+      --json-strict                Like --json, and all failures also emit JSON to stdout
+      --reload-validate-device DEV cpu|skip (default: cpu)
+      --lock-mode MODE             auto|fd|mkdir (default: auto)
+      --lock-timeout N             Lock wait seconds (0=fail-fast, -1=unlimited, default: 0)
 ```
 
 ### GGUF Options
@@ -544,7 +571,7 @@ The scripts are designed for unattended operation. With `--json`, all human-read
 
 Flox provides GitHub Actions for CI integration. The environment travels with the repo, so CI gets the same toolchain as local development.
 
-The commands (`quantize-fp8`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
+The commands (`quantize-fp8-local`, `quantize-fp8-production`, `quantize-llmc-local`, `quantize-llmc-production`, `quantize-gguf-local`, `quantize-gguf-production`, etc.) are binaries from the `model-quantizer` package and work in all contexts — interactive sessions and CI alike:
 
 ```yaml
 # .github/workflows/quantize.yml
@@ -557,14 +584,14 @@ jobs:
       - uses: flox/activate-action@v1
         with:
           command: |
-            quantize-fp8 --online --json Qwen/Qwen3-8B > result.json
+            quantize-fp8-production --online --json Qwen/Qwen3-8B > result.json
             cat result.json
 ```
 
 For non-GitHub CI (GitLab, CircleCI, Jenkins), install Flox on the runner and use `flox activate --`:
 
 ```bash
-flox activate -- quantize-fp8 --online --json Qwen/Qwen3-8B > result.json
+flox activate -- quantize-fp8-production --online --json Qwen/Qwen3-8B > result.json
 ```
 
 ### Key behaviors for automation
